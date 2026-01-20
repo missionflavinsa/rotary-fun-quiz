@@ -1,0 +1,60 @@
+Generate 10 quiz questions for Class 7 Mathematics, Topic: Algebra.
+Mix of MCQ, integer, and subjective types.
+Difficulty: Foundation level.
+
+IMPORTANT FORMAT RULES:
+1. Options should NOT have letter prefixes (no A), B), etc.)
+2. correct_answer should be the exact text of the correct option
+3. class_names format: "Class 7 - Satyendra Nath Bose" (use " - " with spaces around dash)
+
+Return as JSON array in this EXACT format:
+[
+  {
+    "content": "What is the value of x in 2x + 5 = 15?",
+    "type": "mcq",
+    "options": ["3", "5", "7", "10"],
+    "correct_answer": "5",
+    "difficulty": "medium",
+    "points": 10,
+    "solution_text": "2x + 5 = 15, so 2x = 10, x = 5",
+    "class_names": ["Class 7 - Satyendra Nath Bose"],
+    "subject_name": "Mathematics",
+    "topic_name": "Algebra",
+    "subtopic_name": "Linear Equations"
+  },
+  {
+    "content": "Calculate 25 × 4",
+    "type": "integer",
+    "correct_answer": "100",
+    "difficulty": "easy",
+    "class_names": ["Class 7 - Satyendra Nath Bose"]
+  },
+  {
+    "content": "Explain linear equations.",
+    "type": "subjective",
+    "correct_answer": "A linear equation is an equation where the highest power of the variable is 1.",
+    "difficulty": "medium",
+    "class_names": ["Class 7 - Satyendra Nath Bose"]
+  }
+]
+
+📋 JSON Format Reference:
+Field             Type      Required       Description
+─────────────────────────────────────────────────────────────
+content           string    ✅             Question text
+type              string    ✅             mcq, integer, or subjective
+options           array     MCQ only       Array of options WITHOUT letter prefixes
+correct_answer    string    ✅             Exact text of correct option (no prefix)
+difficulty        string    Optional       easy (NCERT), medium (Foundation), hard (Advance)
+class_names       array     Optional       Format: ["Class 7 - Satyendra Nath Bose"]
+subject_name      string    Optional       Subject name for linking
+topic_name        string    Optional       Topic name
+subtopic_name     string    Optional       Subtopic name
+points            number    Optional       Points for the question (default: 10)
+solution_text     string    Optional       Explanation/solution
+
+AVAILABLE CLASSES (use exact format):
+- Class 7 - Satyendra Nath Bose
+- Class 7 - Sunita Williams  
+- Class 8 - [Section Name]
+(Add your classes here for reference)
