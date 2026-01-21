@@ -526,32 +526,108 @@ export default function PlayGamePage() {
         const tab = tabs[tabIndex]
         if (!tab || !tab.currentQuestion) return
 
-        const isAnswerCorrect = answer === tab.currentQuestion.correct_answer
-        const points = isAnswerCorrect ? (tab.currentQuestion.points || 10) : 0
+        const questionType = tab.currentQuestion.type
 
-        // Update this tab to result phase (independent of other panels)
+        // For MCQ: auto-evaluate, for integer/subjective: teacher evaluates
+        if (questionType === 'mcq') {
+            const isAnswerCorrect = answer === tab.currentQuestion.correct_answer
+            const points = isAnswerCorrect ? (tab.currentQuestion.points || 10) : 0
+
+            // Update this tab to result phase
+            updateTab(tabIndex, {
+                selectedAnswer: answer,
+                isCorrect: isAnswerCorrect,
+                awaitingTeacherScore: false,
+                phase: 'result'
+            })
+
+            // Update local game score
+            if (isAnswerCorrect) {
+                setScore(prev => prev + points)
+            }
+
+            // REAL-TIME: Save result to game_results table
+            if (sessionId && tab.selectedStudent && tab.currentQuestion) {
+                try {
+                    if (!tab.currentQuestion.id.startsWith('ai-') && !tab.currentQuestion.id.startsWith('fallback')) {
+                        await supabase.from('game_results').insert({
+                            session_id: sessionId,
+                            student_id: tab.selectedStudent.id,
+                            question_id: tab.currentQuestion.id,
+                            student_answer: answer,
+                            is_correct: isAnswerCorrect,
+                            points_earned: points,
+                            time_taken_seconds: QUESTION_TIME_LIMIT - tab.timeLeft
+                        })
+                    }
+                } catch (err) {
+                    console.error('Error saving game result:', err)
+                }
+            }
+
+            // REAL-TIME: Update student's total_points in database
+            if (isAnswerCorrect && tab.selectedStudent) {
+                try {
+                    const { data: student } = await supabase
+                        .from('students')
+                        .select('total_points')
+                        .eq('id', tab.selectedStudent.id)
+                        .single()
+
+                    if (student) {
+                        const newTotal = (student.total_points || 0) + points
+                        await supabase
+                            .from('students')
+                            .update({ total_points: newTotal })
+                            .eq('id', tab.selectedStudent.id)
+
+                        console.log(`✓ Updated ${tab.selectedStudent.full_name}'s points: +${points} = ${newTotal}`)
+                    }
+                } catch (err) {
+                    console.error('Error updating student points:', err)
+                }
+            }
+        } else {
+            // Integer/Subjective: Teacher must evaluate the answer
+            updateTab(tabIndex, {
+                selectedAnswer: answer,
+                isCorrect: null, // Will be set by teacher
+                awaitingTeacherScore: true,
+                teacherAwardedPoints: null,
+                phase: 'result'
+            })
+        }
+    }
+
+    // Handle teacher awarding points for a specific panel (integer/subjective questions)
+    const handleTabTeacherAwardPoints = async (tabIndex: number, points: number) => {
+        const tab = tabs[tabIndex]
+        if (!tab || !tab.currentQuestion || !tab.selectedStudent) return
+
+        const isCorrect = points > 0
+
+        // Update the tab with teacher's scoring
         updateTab(tabIndex, {
-            selectedAnswer: answer,
-            isCorrect: isAnswerCorrect,
-            phase: 'result'
+            isCorrect: isCorrect,
+            teacherAwardedPoints: points,
+            awaitingTeacherScore: false
         })
 
         // Update local game score
-        if (isAnswerCorrect) {
+        if (points > 0) {
             setScore(prev => prev + points)
         }
 
         // REAL-TIME: Save result to game_results table
-        if (sessionId && tab.selectedStudent && tab.currentQuestion) {
+        if (sessionId) {
             try {
-                // Don't save AI or fallback questions to game_results (no question_id in DB)
                 if (!tab.currentQuestion.id.startsWith('ai-') && !tab.currentQuestion.id.startsWith('fallback')) {
                     await supabase.from('game_results').insert({
                         session_id: sessionId,
                         student_id: tab.selectedStudent.id,
                         question_id: tab.currentQuestion.id,
-                        student_answer: answer,
-                        is_correct: isAnswerCorrect,
+                        student_answer: tab.selectedAnswer || '',
+                        is_correct: isCorrect,
                         points_earned: points,
                         time_taken_seconds: QUESTION_TIME_LIMIT - tab.timeLeft
                     })
@@ -562,7 +638,7 @@ export default function PlayGamePage() {
         }
 
         // REAL-TIME: Update student's total_points in database
-        if (isAnswerCorrect && tab.selectedStudent) {
+        if (points > 0) {
             try {
                 const { data: student } = await supabase
                     .from('students')
@@ -577,7 +653,7 @@ export default function PlayGamePage() {
                         .update({ total_points: newTotal })
                         .eq('id', tab.selectedStudent.id)
 
-                    console.log(`✓ Updated ${tab.selectedStudent.full_name}'s points: +${points} = ${newTotal}`)
+                    console.log(`✓ Teacher awarded ${tab.selectedStudent.full_name}: +${points} = ${newTotal}`)
                 }
             } catch (err) {
                 console.error('Error updating student points:', err)
@@ -1410,7 +1486,11 @@ export default function PlayGamePage() {
                                                                         segments={panelStudents.map(s => ({ id: s.id, name: s.full_name }))}
                                                                         onSpinEnd={(winner) => {
                                                                             // Individual panel spin - update this tab
-                                                                            const availableQs = questions.filter(q => !answeredQuestions.includes(q.id))
+                                                                            // Exclude answered questions AND questions already assigned to other panels
+                                                                            const usedQuestionIds = tabs.map(t => t.currentQuestion?.id).filter(Boolean) as string[]
+                                                                            const availableQs = questions.filter(q =>
+                                                                                !answeredQuestions.includes(q.id) && !usedQuestionIds.includes(q.id)
+                                                                            )
                                                                             const randomQ = availableQs.length > 0
                                                                                 ? availableQs[Math.floor(Math.random() * availableQs.length)]
                                                                                 : null
@@ -1514,6 +1594,57 @@ export default function PlayGamePage() {
                                                     <MathRenderer content={option} className="text-lg inline" />
                                                 </button>
                                             ))}
+                                        </div>
+                                    )}
+
+                                    {/* Integer Input for Single Panel */}
+                                    {currentQuestion.type === 'integer' && (
+                                        <div className="max-w-md mx-auto">
+                                            <input
+                                                type="text"
+                                                inputMode="numeric"
+                                                placeholder="Type your numerical answer..."
+                                                id="single-panel-answer"
+                                                className="w-full px-6 py-4 bg-white/10 backdrop-blur-sm border-2 border-white/20 rounded-2xl text-center text-2xl font-bold focus:outline-none focus:border-indigo-400 focus:bg-white/15 transition-all placeholder:text-white/30"
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        handleAnswer((e.target as HTMLInputElement).value)
+                                                    }
+                                                }}
+                                            />
+                                            <button
+                                                onClick={() => {
+                                                    const input = document.getElementById('single-panel-answer') as HTMLInputElement
+                                                    if (input && input.value) {
+                                                        handleAnswer(input.value)
+                                                    }
+                                                }}
+                                                className="w-full mt-4 py-3 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-2xl font-bold text-lg hover:from-indigo-600 hover:via-purple-600 hover:to-pink-600 transition-all shadow-xl shadow-purple-500/30"
+                                            >
+                                                ✨ Submit Answer
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {/* Subjective Question - Scratchpad for Single Panel */}
+                                    {currentQuestion.type === 'subjective' && (
+                                        <div className="text-center">
+                                            <p className="text-white/70 mb-4">Write your answer on the scratchpad</p>
+                                            <button
+                                                onClick={() => setShowBlackboard(true)}
+                                                className="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-amber-500 to-orange-500 rounded-xl font-bold hover:from-amber-600 hover:to-orange-600 transition shadow-lg transform hover:scale-105"
+                                            >
+                                                <PenTool className="w-5 h-5" />
+                                                Open Scratchpad
+                                            </button>
+                                            <div className="mt-6">
+                                                <button
+                                                    onClick={() => handleAnswer('submitted_on_scratchpad')}
+                                                    className="px-8 py-3 bg-gradient-to-r from-green-500 to-emerald-500 rounded-xl font-bold hover:from-green-600 hover:to-emerald-600 transition"
+                                                >
+                                                    ✓ Submit for Teacher Evaluation
+                                                </button>
+                                            </div>
                                         </div>
                                     )}
                                 </div>
@@ -1661,8 +1792,8 @@ export default function PlayGamePage() {
                                                     </motion.div>
                                                 )}
 
-                                                {/* Panel with Question and Student */}
-                                                {tab.phase === 'question' && q && student && (
+                                                {/* Panel with Question and Student - show for both question and result phases */}
+                                                {(tab.phase === 'question' || tab.phase === 'result') && q && student && (
                                                     <div className="max-w-full mx-auto">
                                                         {/* Student Header with Question Info */}
                                                         <div className="text-center mb-6">
@@ -1805,25 +1936,69 @@ export default function PlayGamePage() {
                                                             </div>
                                                         )}
 
-                                                        {/* Result State - Show result and Next Student button */}
+                                                        {/* Result State - Show teacher scoring or result based on question type */}
                                                         {hasAnswered && (
-                                                            <div className={`text-center py-6 rounded-2xl border ${tab.isCorrect ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
-                                                                <p className={`font-bold text-xl ${tab.isCorrect ? 'text-green-400' : 'text-red-400'}`}>
-                                                                    {tab.isCorrect ? '✓ Correct!' : '✗ Incorrect'}
-                                                                </p>
-                                                                {!tab.isCorrect && (
-                                                                    <p className="text-white/60 mt-1 text-sm">Answer: {q.correct_answer}</p>
-                                                                )}
-                                                                <p className="text-cyan-400 mt-2">+{tab.isCorrect ? q.points : 0} pts</p>
+                                                            <>
+                                                                {/* Teacher Scoring UI for Integer/Subjective */}
+                                                                {tab.awaitingTeacherScore && (q.type === 'integer' || q.type === 'subjective') ? (
+                                                                    <div className="text-center py-4 rounded-2xl border bg-amber-500/10 border-amber-500/30">
+                                                                        <p className="text-amber-400 font-bold text-lg mb-3">📝 Teacher Evaluation</p>
 
-                                                                {/* Next Student Button */}
-                                                                <button
-                                                                    onClick={() => handleTabNextStudent(i)}
-                                                                    className="mt-4 px-6 py-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg font-bold text-sm hover:from-purple-600 hover:to-pink-600 transition"
-                                                                >
-                                                                    🎯 Next Student for Panel {i + 1}
-                                                                </button>
-                                                            </div>
+                                                                        {/* Show student's answer */}
+                                                                        <div className="bg-white/10 rounded-xl p-3 mb-3 mx-4">
+                                                                            <p className="text-white/60 text-xs mb-1">Student's Answer:</p>
+                                                                            <p className="text-white font-medium">{tab.selectedAnswer}</p>
+                                                                        </div>
+
+                                                                        {/* Show expected answer */}
+                                                                        <div className="bg-green-500/10 rounded-xl p-3 mb-4 mx-4">
+                                                                            <p className="text-white/60 text-xs mb-1">Expected Answer:</p>
+                                                                            <p className="text-green-400 font-medium">{q.correct_answer}</p>
+                                                                        </div>
+
+                                                                        <p className="text-white/70 text-sm mb-3">Award points based on answer quality:</p>
+
+                                                                        {/* Point buttons */}
+                                                                        <div className="grid grid-cols-6 gap-2 px-4 mb-3">
+                                                                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, -5].map(pts => (
+                                                                                <button
+                                                                                    key={pts}
+                                                                                    onClick={() => handleTabTeacherAwardPoints(i, pts)}
+                                                                                    className={`py-2 rounded-lg font-bold text-sm transition transform hover:scale-105 ${pts < 0
+                                                                                        ? 'bg-red-500/30 border border-red-500/50 text-red-400 hover:bg-red-500/50'
+                                                                                        : pts === 0
+                                                                                            ? 'bg-gray-500/30 border border-gray-500/50 text-gray-400 hover:bg-gray-500/50'
+                                                                                            : 'bg-green-500/30 border border-green-500/50 text-green-400 hover:bg-green-500/50'
+                                                                                        }`}
+                                                                                >
+                                                                                    {pts > 0 ? `+${pts}` : pts}
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                ) : (
+                                                                    /* Normal result for MCQ or after teacher scoring */
+                                                                    <div className={`text-center py-6 rounded-2xl border ${tab.isCorrect ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                                                                        <p className={`font-bold text-xl ${tab.isCorrect ? 'text-green-400' : 'text-red-400'}`}>
+                                                                            {tab.isCorrect ? '✓ Correct!' : '✗ Incorrect'}
+                                                                        </p>
+                                                                        {!tab.isCorrect && (
+                                                                            <p className="text-white/60 mt-1 text-sm">Answer: {q.correct_answer}</p>
+                                                                        )}
+                                                                        <p className="text-cyan-400 mt-2">
+                                                                            +{tab.teacherAwardedPoints !== null ? tab.teacherAwardedPoints : (tab.isCorrect ? q.points : 0)} pts
+                                                                        </p>
+
+                                                                        {/* Next Student Button */}
+                                                                        <button
+                                                                            onClick={() => handleTabNextStudent(i)}
+                                                                            className="mt-4 px-6 py-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg font-bold text-sm hover:from-purple-600 hover:to-pink-600 transition"
+                                                                        >
+                                                                            🎯 Next Student for Panel {i + 1}
+                                                                        </button>
+                                                                    </div>
+                                                                )}
+                                                            </>
                                                         )}
                                                     </div>
                                                 )}
@@ -1836,167 +2011,169 @@ export default function PlayGamePage() {
                     )}
 
                     {/* RESULT PHASE */}
-                    {gamePhase === 'result' && (
-                        <motion.div
-                            key="result"
-                            initial={{ opacity: 0, scale: 0.8 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.8 }}
-                            className="max-w-2xl mx-auto text-center"
-                        >
-                            {/* Teacher Scoring UI for Integer/Subjective */}
-                            {awaitingTeacherScore && currentQuestion && (currentQuestion.type === 'integer' || currentQuestion.type === 'subjective') ? (
-                                <div className="space-y-6">
-                                    <h1 className="text-3xl font-bold text-white mb-4">📝 Teacher Scoring</h1>
-                                    <p className="text-white/70 mb-2">
-                                        <span className="font-bold text-yellow-400">{selectedStudent?.full_name}</span> answered:
-                                    </p>
+                    {
+                        gamePhase === 'result' && (
+                            <motion.div
+                                key="result"
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.8 }}
+                                className="max-w-2xl mx-auto text-center"
+                            >
+                                {/* Teacher Scoring UI for Integer/Subjective */}
+                                {awaitingTeacherScore && currentQuestion && (currentQuestion.type === 'integer' || currentQuestion.type === 'subjective') ? (
+                                    <div className="space-y-6">
+                                        <h1 className="text-3xl font-bold text-white mb-4">📝 Teacher Scoring</h1>
+                                        <p className="text-white/70 mb-2">
+                                            <span className="font-bold text-yellow-400">{selectedStudent?.full_name}</span> answered:
+                                        </p>
 
-                                    {/* Show correct answer */}
-                                    <div className="bg-white/10 rounded-xl p-6 mb-6">
-                                        <p className="text-sm text-white/60 mb-2">Expected Answer:</p>
-                                        <p className="text-xl font-bold text-green-400 mb-4">{currentQuestion.correct_answer}</p>
-                                        <p className="text-sm text-white/60 mb-1">Student's answer is on the blackboard</p>
-                                    </div>
+                                        {/* Show correct answer */}
+                                        <div className="bg-white/10 rounded-xl p-6 mb-6">
+                                            <p className="text-sm text-white/60 mb-2">Expected Answer:</p>
+                                            <p className="text-xl font-bold text-green-400 mb-4">{currentQuestion.correct_answer}</p>
+                                            <p className="text-sm text-white/60 mb-1">Student's answer is on the blackboard</p>
+                                        </div>
 
-                                    <p className="text-lg text-white/80 mb-4">Award points based on the answer quality:</p>
+                                        <p className="text-lg text-white/80 mb-4">Award points based on the answer quality:</p>
 
-                                    {/* Point buttons 1-10 */}
-                                    <div className="grid grid-cols-5 gap-3 mb-6">
-                                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(pts => (
+                                        {/* Point buttons 1-10 */}
+                                        <div className="grid grid-cols-5 gap-3 mb-6">
+                                            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(pts => (
+                                                <button
+                                                    key={pts}
+                                                    onClick={() => handleTeacherAwardPoints(pts)}
+                                                    className="py-4 bg-gradient-to-br from-green-500/30 to-emerald-500/30 border-2 border-green-400/50 rounded-xl font-bold text-lg text-green-400 hover:from-green-500/50 hover:to-emerald-500/50 hover:border-green-400 transition transform hover:scale-105"
+                                                >
+                                                    +{pts}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        {/* No Points and Penalty buttons */}
+                                        <div className="flex gap-4 justify-center">
                                             <button
-                                                key={pts}
-                                                onClick={() => handleTeacherAwardPoints(pts)}
-                                                className="py-4 bg-gradient-to-br from-green-500/30 to-emerald-500/30 border-2 border-green-400/50 rounded-xl font-bold text-lg text-green-400 hover:from-green-500/50 hover:to-emerald-500/50 hover:border-green-400 transition transform hover:scale-105"
+                                                onClick={() => handleTeacherAwardPoints(0)}
+                                                className="px-8 py-4 bg-gray-500/30 border-2 border-gray-400/50 rounded-xl font-bold text-gray-300 hover:bg-gray-500/50 hover:border-gray-400 transition"
                                             >
-                                                +{pts}
+                                                No Points (0)
                                             </button>
-                                        ))}
+                                            {score > 0 && (
+                                                <button
+                                                    onClick={() => handleTeacherAwardPoints(-1)}
+                                                    className="px-8 py-4 bg-red-500/30 border-2 border-red-400/50 rounded-xl font-bold text-red-400 hover:bg-red-500/50 hover:border-red-400 transition"
+                                                >
+                                                    Penalty (-1)
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
-
-                                    {/* No Points and Penalty buttons */}
-                                    <div className="flex gap-4 justify-center">
-                                        <button
-                                            onClick={() => handleTeacherAwardPoints(0)}
-                                            className="px-8 py-4 bg-gray-500/30 border-2 border-gray-400/50 rounded-xl font-bold text-gray-300 hover:bg-gray-500/50 hover:border-gray-400 transition"
+                                ) : (
+                                    /* MCQ Result or Post-Teacher Scoring */
+                                    <>
+                                        <motion.div
+                                            initial={{ scale: 0 }}
+                                            animate={{ scale: 1 }}
+                                            transition={{ type: 'spring', damping: 10 }}
+                                            className={`inline-flex items-center justify-center w-32 h-32 rounded-full mb-8 ${isCorrect === null
+                                                ? 'bg-gray-500'
+                                                : isCorrect
+                                                    ? 'bg-green-500'
+                                                    : 'bg-red-500'
+                                                }`}
                                         >
-                                            No Points (0)
-                                        </button>
-                                        {score > 0 && (
-                                            <button
-                                                onClick={() => handleTeacherAwardPoints(-1)}
-                                                className="px-8 py-4 bg-red-500/30 border-2 border-red-400/50 rounded-xl font-bold text-red-400 hover:bg-red-500/50 hover:border-red-400 transition"
-                                            >
-                                                Penalty (-1)
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            ) : (
-                                /* MCQ Result or Post-Teacher Scoring */
-                                <>
-                                    <motion.div
-                                        initial={{ scale: 0 }}
-                                        animate={{ scale: 1 }}
-                                        transition={{ type: 'spring', damping: 10 }}
-                                        className={`inline-flex items-center justify-center w-32 h-32 rounded-full mb-8 ${isCorrect === null
-                                            ? 'bg-gray-500'
-                                            : isCorrect
-                                                ? 'bg-green-500'
-                                                : 'bg-red-500'
-                                            }`}
-                                    >
-                                        {isCorrect === null ? (
-                                            <Clock className="w-20 h-20 text-white" />
-                                        ) : isCorrect ? (
-                                            <CheckCircle className="w-20 h-20 text-white" />
-                                        ) : (
-                                            <XCircle className="w-20 h-20 text-white" />
-                                        )}
-                                    </motion.div>
+                                            {isCorrect === null ? (
+                                                <Clock className="w-20 h-20 text-white" />
+                                            ) : isCorrect ? (
+                                                <CheckCircle className="w-20 h-20 text-white" />
+                                            ) : (
+                                                <XCircle className="w-20 h-20 text-white" />
+                                            )}
+                                        </motion.div>
 
-                                    <h1 className={`text-4xl font-bold mb-4 ${isCorrect === null
-                                        ? 'text-gray-400'
-                                        : isCorrect
-                                            ? 'text-green-400'
-                                            : 'text-red-400'
-                                        }`}>
-                                        {isCorrect === null
-                                            ? '⏳ Awaiting Score'
+                                        <h1 className={`text-4xl font-bold mb-4 ${isCorrect === null
+                                            ? 'text-gray-400'
                                             : isCorrect
-                                                ? '🎉 Correct!'
-                                                : timeLeft === 0
-                                                    ? '⏰ Time\'s Up!'
-                                                    : '❌ Incorrect'}
-                                    </h1>
+                                                ? 'text-green-400'
+                                                : 'text-red-400'
+                                            }`}>
+                                            {isCorrect === null
+                                                ? '⏳ Awaiting Score'
+                                                : isCorrect
+                                                    ? '🎉 Correct!'
+                                                    : timeLeft === 0
+                                                        ? '⏰ Time\'s Up!'
+                                                        : '❌ Incorrect'}
+                                        </h1>
 
-                                    <p className="text-xl text-white/80 mb-2">
-                                        {selectedStudent?.full_name} {isCorrect ? 'earned' : teacherAwardedPoints === 0 ? 'received' : 'missed'}
-                                    </p>
-                                    <p className={`text-5xl font-bold mb-8 ${teacherAwardedPoints !== null
-                                        ? teacherAwardedPoints > 0
-                                            ? 'text-green-400'
-                                            : teacherAwardedPoints < 0
-                                                ? 'text-red-400'
+                                        <p className="text-xl text-white/80 mb-2">
+                                            {selectedStudent?.full_name} {isCorrect ? 'earned' : teacherAwardedPoints === 0 ? 'received' : 'missed'}
+                                        </p>
+                                        <p className={`text-5xl font-bold mb-8 ${teacherAwardedPoints !== null
+                                            ? teacherAwardedPoints > 0
+                                                ? 'text-green-400'
+                                                : teacherAwardedPoints < 0
+                                                    ? 'text-red-400'
+                                                    : 'text-white/40'
+                                            : isCorrect
+                                                ? 'text-green-400'
                                                 : 'text-white/40'
-                                        : isCorrect
-                                            ? 'text-green-400'
-                                            : 'text-white/40'
-                                        }`}>
-                                        {teacherAwardedPoints !== null
-                                            ? teacherAwardedPoints >= 0
-                                                ? `+${teacherAwardedPoints}`
-                                                : teacherAwardedPoints
-                                            : isCorrect
-                                                ? `+${currentQuestion?.points || 10}`
-                                                : '0'} pts
-                                    </p>
+                                            }`}>
+                                            {teacherAwardedPoints !== null
+                                                ? teacherAwardedPoints >= 0
+                                                    ? `+${teacherAwardedPoints}`
+                                                    : teacherAwardedPoints
+                                                : isCorrect
+                                                    ? `+${currentQuestion?.points || 10}`
+                                                    : '0'} pts
+                                        </p>
 
-                                    {!isCorrect && currentQuestion && currentQuestion.type === 'mcq' && (
-                                        <div className="bg-white/10 rounded-xl p-6 mb-8">
-                                            <p className="text-sm text-white/60 mb-2">Correct Answer:</p>
-                                            <p className="text-xl font-bold text-green-400">{currentQuestion.correct_answer}</p>
-                                        </div>
-                                    )}
-
-                                    {/* Solution Display */}
-                                    {currentQuestion && (currentQuestion.solution_text || currentQuestion.solution_image_url) && (
-                                        <div className="bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-400/30 rounded-xl p-6 mb-8 text-left">
-                                            <div className="flex items-center gap-2 mb-4">
-                                                <Brain className="w-5 h-5 text-indigo-400" />
-                                                <h3 className="text-lg font-bold text-indigo-300">Solution</h3>
+                                        {!isCorrect && currentQuestion && currentQuestion.type === 'mcq' && (
+                                            <div className="bg-white/10 rounded-xl p-6 mb-8">
+                                                <p className="text-sm text-white/60 mb-2">Correct Answer:</p>
+                                                <p className="text-xl font-bold text-green-400">{currentQuestion.correct_answer}</p>
                                             </div>
-                                            {currentQuestion.solution_text && (
-                                                <p className="text-white/80 leading-relaxed whitespace-pre-wrap mb-4">
-                                                    {currentQuestion.solution_text}
-                                                </p>
-                                            )}
-                                            {currentQuestion.solution_image_url && (
-                                                <img
-                                                    src={currentQuestion.solution_image_url}
-                                                    alt="Solution"
-                                                    className="max-w-full h-auto rounded-lg border border-white/20 mx-auto"
-                                                />
-                                            )}
-                                        </div>
-                                    )}
+                                        )}
 
-                                    <button
-                                        onClick={nextRound}
-                                        disabled={awaitingTeacherScore}
-                                        className="inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full font-bold text-lg hover:from-indigo-600 hover:to-purple-600 transition transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        Next Round
-                                        <ArrowRight className="w-5 h-5" />
-                                    </button>
-                                </>
-                            )}
-                        </motion.div>
-                    )}
-                </AnimatePresence>
-            </div>
+                                        {/* Solution Display */}
+                                        {currentQuestion && (currentQuestion.solution_text || currentQuestion.solution_image_url) && (
+                                            <div className="bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-400/30 rounded-xl p-6 mb-8 text-left">
+                                                <div className="flex items-center gap-2 mb-4">
+                                                    <Brain className="w-5 h-5 text-indigo-400" />
+                                                    <h3 className="text-lg font-bold text-indigo-300">Solution</h3>
+                                                </div>
+                                                {currentQuestion.solution_text && (
+                                                    <p className="text-white/80 leading-relaxed whitespace-pre-wrap mb-4">
+                                                        {currentQuestion.solution_text}
+                                                    </p>
+                                                )}
+                                                {currentQuestion.solution_image_url && (
+                                                    <img
+                                                        src={currentQuestion.solution_image_url}
+                                                        alt="Solution"
+                                                        className="max-w-full h-auto rounded-lg border border-white/20 mx-auto"
+                                                    />
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <button
+                                            onClick={nextRound}
+                                            disabled={awaitingTeacherScore}
+                                            className="inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full font-bold text-lg hover:from-indigo-600 hover:to-purple-600 transition transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            Next Round
+                                            <ArrowRight className="w-5 h-5" />
+                                        </button>
+                                    </>
+                                )}
+                            </motion.div>
+                        )
+                    }
+                </AnimatePresence >
+            </div >
             {/* Blackboard Component - Global only */}
-            <Blackboard
+            < Blackboard
                 isOpen={showBlackboard}
                 onClose={() => setShowBlackboard(false)}
             />
@@ -2074,6 +2251,6 @@ export default function PlayGamePage() {
                     </motion.div>
                 )}
             </AnimatePresence>
-        </div>
+        </div >
     )
 }
