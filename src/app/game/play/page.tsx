@@ -294,8 +294,11 @@ export default function PlayGamePage() {
                     if (allQuestions.length > 0) {
                         setLoadingProgress(100)
                         setLoadingMessage('Ready to play!')
+                        // Debug: log question types loaded
+                        const typeCounts = allQuestions.reduce((acc, q) => { acc[q.type] = (acc[q.type] || 0) + 1; return acc }, {} as Record<string, number>)
+                        console.log('Questions loaded from bank:', { total: allQuestions.length, types: typeCounts, questions: allQuestions.map(q => ({ id: q.id, type: q.type, content: q.content.substring(0, 50) })) })
                         // Shuffle and limit
-                        const shuffled = allQuestions.sort(() => Math.random() - 0.5).slice(0, 20)
+                        const shuffled = allQuestions.sort(() => Math.random() - 0.5).slice(0, 50)
                         setQuestions(shuffled)
                         setTimeout(() => setGamePhase('wheel'), 500)
                     } else {
@@ -823,7 +826,8 @@ export default function PlayGamePage() {
         const subtopicString = finalSubtopics.length > 0 ? finalSubtopics.join(', ') : ''
 
         const generatedQuestions: Question[] = []
-        const numQuestions = 5
+        // Generate questions equal to total students in the class
+        const numQuestions = students.length || 5
 
         for (let i = 0; i < numQuestions; i++) {
             setLoadingMessage(`Generating question ${i + 1} of ${numQuestions}...`)
@@ -840,7 +844,7 @@ export default function PlayGamePage() {
                         topic: topicString,
                         subtopic: subtopicString,
                         difficulty: ['easy', 'medium', 'hard'][i % 3],
-                        model: aiModel || 'gemini',
+                        model: aiModel || 'openai',
                         questionType: questionTypes[i % questionTypes.length] // Cycle through selected types
                     })
                 })
@@ -1140,10 +1144,10 @@ export default function PlayGamePage() {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950 text-white overflow-hidden">
-            {/* Background effects */}
+            {/* Background effects - lightweight for smartboard performance */}
             <div className="fixed inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute top-1/4 -left-20 w-[500px] h-[500px] bg-indigo-600/20 rounded-full blur-[100px]"></div>
-                <div className="absolute bottom-1/4 -right-20 w-[500px] h-[500px] bg-pink-600/20 rounded-full blur-[100px]"></div>
+                <div className="absolute top-1/4 -left-20 w-[500px] h-[500px] bg-indigo-600/10 rounded-full blur-3xl"></div>
+                <div className="absolute bottom-1/4 -right-20 w-[500px] h-[500px] bg-pink-600/10 rounded-full blur-3xl"></div>
             </div>
 
             {/* Header */}
@@ -1576,7 +1580,7 @@ export default function PlayGamePage() {
                                         </div>
                                     </div>
 
-                                    <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-8 mb-8">
+                                    <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 mb-8">
                                         <MathRenderer content={currentQuestion.content} className="text-xl md:text-2xl font-medium leading-relaxed text-center" />
                                     </div>
 

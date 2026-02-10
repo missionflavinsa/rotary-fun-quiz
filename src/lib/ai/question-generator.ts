@@ -80,7 +80,7 @@ export async function generateQuestionWithOpenAI(params: GenerateParams): Promis
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: 'gpt-3.5-turbo',
+                model: 'gpt-4o-mini',
                 messages: [
                     { role: 'system', content: 'You are an educational question generator for Indian school exams. Generate questions in JSON format.' },
                     { role: 'user', content: prompt }
@@ -342,7 +342,7 @@ function parseAIResponse(text: string, defaultType: string): GeneratedQuestion |
 
 // ==================== MAIN FUNCTION ====================
 export async function generateQuestion(params: GenerateParams): Promise<GeneratedQuestion | null> {
-    const model = params.model || 'gemini'
+    const model = params.model || 'openai'
 
     console.log(`Generating question with model: ${model}`)
 

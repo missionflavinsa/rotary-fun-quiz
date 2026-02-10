@@ -34,7 +34,7 @@ export default function QuestionsPage() {
     const [isLoading, setIsLoading] = useState(false)
     const [fetching, setFetching] = useState(true)
     const [generatingAI, setGeneratingAI] = useState(false)
-    const [aiModel, setAiModel] = useState('gemini')
+    const [aiModel, setAiModel] = useState('openai')
 
     const [questions, setQuestions] = useState<Question[]>([])
     const [classes, setClasses] = useState<ClassItem[]>([])

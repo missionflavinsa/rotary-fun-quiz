@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
                         difficulty: difficulty || 'medium',
                         question_type: questionType || 'mcq',
                         class_level: classLevel || '10',
-                        model: model || 'gemini',
+                        model: model || 'openai',
                         subtopic_id,
                         class_id
                     })
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
             difficulty: difficulty || 'medium',
             questionType: questionType || 'mcq',
             classLevel: classLevel || '10',
-            model: model || 'gemini'
+            model: model || 'openai'
         })
 
         if (!question) {

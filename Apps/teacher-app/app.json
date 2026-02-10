@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "teacher-app",
+    "name": "Teacher App",
     "slug": "teacher-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -36,12 +36,12 @@
     "experiments": {
       "typedRoutes": true
     },
+    "owner": "flavinsa",
     "extra": {
       "router": {},
       "eas": {
         "projectId": "56f63ef8-ec9f-4c54-9fdb-ae6fd50f4a59"
       }
-    },
-    "owner": "flavinsa"
+    }
   }
 }
