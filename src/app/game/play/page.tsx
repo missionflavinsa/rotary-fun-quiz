@@ -219,30 +219,33 @@ export default function PlayGamePage() {
 
                     let allQuestions: Question[] = []
 
-                    // Method 1: Fetch questions by subtopic/topic (legacy method)
-                    let questionsQuery = supabase.from('questions').select('*')
-
-                    // Filter by subtopics if selected
-                    if (subtopicIds.length > 0) {
-                        questionsQuery = questionsQuery.in('subtopic_id', subtopicIds)
-                    } else if (topicIds.length > 0) {
-                        // Get subtopics for these topics and filter
+                    // Get all subtopic IDs for the selected topics (needed for filtering)
+                    let allSubtopicIdsForTopics: string[] = []
+                    if (topicIds.length > 0) {
                         const { data: subtopicsData } = await supabase
                             .from('subtopics')
                             .select('id')
                             .in('topic_id', topicIds)
                         if (subtopicsData && subtopicsData.length > 0) {
-                            questionsQuery = questionsQuery.in('subtopic_id', subtopicsData.map(s => s.id))
+                            allSubtopicIdsForTopics = subtopicsData.map(s => s.id)
                         }
                     }
 
-                    // Filter by question types
-                    if (questionTypes.length > 0) {
-                        questionsQuery = questionsQuery.in('type', questionTypes)
-                    }
+                    const effectiveSubtopicIds = subtopicIds.length > 0 ? subtopicIds : allSubtopicIdsForTopics
 
-                    const { data: questionsData } = await questionsQuery.limit(20)
-                    if (questionsData) allQuestions = [...questionsData]
+                    // Method 1: Fetch questions by subtopic_id (questions that have subtopic set)
+                    if (effectiveSubtopicIds.length > 0) {
+                        let questionsQuery = supabase.from('questions').select('*')
+                            .in('subtopic_id', effectiveSubtopicIds)
+
+                        if (questionTypes.length > 0) {
+                            questionsQuery = questionsQuery.in('type', questionTypes)
+                        }
+
+                        const { data: questionsData, error: qError } = await questionsQuery.limit(100)
+                        console.log('Method 1 (by subtopic):', { found: questionsData?.length || 0, error: qError?.message, subtopicIds: effectiveSubtopicIds })
+                        if (questionsData) allQuestions = [...questionsData]
+                    }
 
                     // Method 2: Fetch questions linked to this class via question_class_links
                     setLoadingProgress(75)
@@ -259,31 +262,41 @@ export default function PlayGamePage() {
                             .select('*')
                             .in('id', linkedQuestionIds.map(l => l.question_id))
 
-                        // CRITICAL: Also filter by subtopic/topic to ensure correct subject
-                        if (subtopicIds.length > 0) {
-                            linkedQuery = linkedQuery.in('subtopic_id', subtopicIds)
-                        } else if (topicIds.length > 0) {
-                            // Get subtopics for these topics and filter
-                            const { data: topicSubtopics } = await supabase
-                                .from('subtopics')
-                                .select('id')
-                                .in('topic_id', topicIds)
-                            if (topicSubtopics && topicSubtopics.length > 0) {
-                                linkedQuery = linkedQuery.in('subtopic_id', topicSubtopics.map(s => s.id))
-                            }
-                        }
-
-                        // Also filter by question types if selected
+                        // Filter by question types if selected
                         if (questionTypes.length > 0) {
                             linkedQuery = linkedQuery.in('type', questionTypes)
                         }
 
-                        const { data: linkedQuestionsData } = await linkedQuery.limit(20)
+                        const { data: linkedQuestionsData, error: lError } = await linkedQuery.limit(100)
+                        console.log('Method 2 (by class link):', { found: linkedQuestionsData?.length || 0, error: lError?.message, classId })
 
                         if (linkedQuestionsData) {
                             // Merge and deduplicate
                             const existingIds = new Set(allQuestions.map(q => q.id))
                             linkedQuestionsData.forEach(q => {
+                                if (!existingIds.has(q.id)) {
+                                    allQuestions.push(q)
+                                }
+                            })
+                        }
+                    }
+
+                    // Method 3: Fallback — fetch questions with NULL subtopic_id that match via subject
+                    // This catches questions that were created without being assigned to a subtopic
+                    if (effectiveSubtopicIds.length > 0) {
+                        let nullSubtopicQuery = supabase.from('questions').select('*')
+                            .is('subtopic_id', null)
+
+                        if (questionTypes.length > 0) {
+                            nullSubtopicQuery = nullSubtopicQuery.in('type', questionTypes)
+                        }
+
+                        const { data: nullSubtopicData, error: nError } = await nullSubtopicQuery.limit(50)
+                        console.log('Method 3 (null subtopic fallback):', { found: nullSubtopicData?.length || 0, error: nError?.message })
+
+                        if (nullSubtopicData) {
+                            const existingIds = new Set(allQuestions.map(q => q.id))
+                            nullSubtopicData.forEach(q => {
                                 if (!existingIds.has(q.id)) {
                                     allQuestions.push(q)
                                 }
