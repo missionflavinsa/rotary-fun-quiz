@@ -54,7 +54,7 @@ export default function GameHistoryPage() {
         const { data, error } = await query
 
         console.log('Game sessions:', data, error)
-        if (data) setGames(data as GameSession[])
+        if (data) setGames(data as unknown as GameSession[])
         setFetching(false)
     }
 
@@ -66,7 +66,7 @@ export default function GameHistoryPage() {
             .eq('session_id', sessionId)
             .order('answered_at', { ascending: true })
 
-        if (data) setGameResults(data as GameResult[])
+        if (data) setGameResults(data as unknown as GameResult[])
         setLoadingResults(false)
     }
 
