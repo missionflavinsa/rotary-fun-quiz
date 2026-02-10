@@ -8,7 +8,9 @@ type GameSession = {
   started_at: string;
   total_questions: number;
   game_score: number;
-  classes?: { name: string } | { name: string }[];
+  classes?: { name: string; section: string } | { name: string; section: string }[];
+  subjects?: { name: string } | { name: string }[];
+  topScorer?: { name: string; points: number } | null;
 };
 
 type TopStudent = {
@@ -40,10 +42,10 @@ export default function DashboardScreen() {
     const fetchTime = new Date();
     fetchTime.setDate(fetchTime.getDate() - 7); // Last 7 days
 
-    // Build query with teacher filter
+    // Build query with teacher filter - include section and subject
     let gamesQuery = supabase
       .from('game_sessions')
-      .select('id, started_at, total_questions, game_score, classes(name)')
+      .select('id, started_at, total_questions, game_score, classes(name, section), subjects(name)')
       .gte('started_at', fetchTime.toISOString())
       .order('started_at', { ascending: false })
       .limit(10);
@@ -59,7 +61,38 @@ export default function DashboardScreen() {
       console.error('Error fetching games:', gamesError);
     }
 
-    if (games) setRecentGames(games as unknown as GameSession[]);
+    // Fetch top scorer for each game
+    let gamesWithScorers: GameSession[] = [];
+    if (games && games.length > 0) {
+      const gameIds = games.map(g => g.id);
+
+      // Get top scorers from game_results grouped by session
+      const { data: results } = await supabase
+        .from('game_results')
+        .select('session_id, points_earned, students(full_name)')
+        .in('session_id', gameIds)
+        .order('points_earned', { ascending: false });
+
+      // Build a map of session_id -> top scorer
+      const topScorerMap: Record<string, { name: string; points: number }> = {};
+      if (results) {
+        for (const r of results) {
+          const sid = r.session_id;
+          const studentName = Array.isArray(r.students) ? r.students[0]?.full_name : (r.students as any)?.full_name;
+          const pts = r.points_earned || 0;
+          if (!topScorerMap[sid] || pts > topScorerMap[sid].points) {
+            topScorerMap[sid] = { name: studentName || 'Unknown', points: pts };
+          }
+        }
+      }
+
+      gamesWithScorers = (games as unknown as GameSession[]).map(g => ({
+        ...g,
+        topScorer: topScorerMap[g.id] || null,
+      }));
+    }
+
+    setRecentGames(gamesWithScorers);
 
     const { data: students, error: studentsError } = await supabase
       .from('students')
@@ -167,14 +200,31 @@ export default function DashboardScreen() {
         </View>
         {recentGames.length > 0 ? recentGames.map(game => {
           // Handle Supabase join returning array or object
-          const className = Array.isArray(game.classes)
-            ? game.classes[0]?.name
-            : game.classes?.name;
+          const classData = Array.isArray(game.classes)
+            ? game.classes[0]
+            : game.classes;
+          const className = classData?.name || 'Unknown Class';
+          const classSection = classData?.section ? ` - ${classData.section}` : '';
+          const subjectName = Array.isArray(game.subjects)
+            ? game.subjects[0]?.name
+            : game.subjects?.name;
+          const gameDate = new Date(game.started_at);
+          const formattedDate = gameDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+          const formattedTime = gameDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
           return (
             <View key={game.id} style={styles.listItem}>
-              <View>
-                <Text style={styles.itemTitle}>{className || 'Unknown Class'}</Text>
-                <Text style={styles.itemSubtitle}>{new Date(game.started_at).toLocaleDateString()}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.itemTitle}>{className}{classSection}</Text>
+                {subjectName && (
+                  <Text style={styles.subjectText}>{subjectName}</Text>
+                )}
+                <Text style={styles.itemSubtitle}>{formattedDate} • {formattedTime}</Text>
+                {game.topScorer && (
+                  <View style={styles.topScorerRow}>
+                    <Ionicons name="trophy" size={12} color="#facc15" />
+                    <Text style={styles.topScorerText}>{game.topScorer.name} ({game.topScorer.points} pts)</Text>
+                  </View>
+                )}
               </View>
               <View style={styles.itemRight}>
                 <Text style={styles.itemScore}>{game.game_score || 0} pts</Text>
@@ -257,4 +307,7 @@ const styles = StyleSheet.create({
   levelRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   levelText: { color: '#6b7280', fontSize: 12, marginLeft: 4 },
   pointsText: { color: '#34d399', fontWeight: 'bold' },
+  subjectText: { color: '#818cf8', fontSize: 12, marginTop: 2 },
+  topScorerRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  topScorerText: { color: '#facc15', fontSize: 11, marginLeft: 4 },
 });

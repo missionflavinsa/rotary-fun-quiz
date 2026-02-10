@@ -1,12 +1,14 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { TouchableOpacity, Alert, StyleSheet } from 'react-native';
+import { TouchableOpacity, Alert, StyleSheet, Platform } from 'react-native';
 import { useAuth } from '../../lib/auth';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function TabLayout() {
   const { signOut } = useAuth();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const handleLogout = () => {
     Alert.alert(
@@ -36,7 +38,8 @@ export default function TabLayout() {
           backgroundColor: '#1e1b4b',
           borderTopColor: '#312e81',
           paddingTop: 8,
-          height: 70,
+          paddingBottom: Math.max(insets.bottom, 8),
+          height: 60 + Math.max(insets.bottom, 8),
         },
         tabBarActiveTintColor: '#818cf8',
         tabBarInactiveTintColor: '#6b7280',
