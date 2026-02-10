@@ -152,7 +152,7 @@ export default function Home() {
       <footer className="relative z-10 border-t border-white/10 mt-20">
         <div className="container mx-auto px-6 py-8 text-center">
           <p className="text-slate-500 text-sm">
-            Powered by <span className="text-white font-medium">Rotary Club</span> • Built with ❤️ for Education
+            Developed by <span className="text-white font-medium">Mr. Austin Royster</span> • Built with ❤️ for Education
           </p>
         </div>
       </footer>
