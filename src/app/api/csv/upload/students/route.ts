@@ -17,7 +17,6 @@ interface StudentRow {
 export async function POST(request: NextRequest) {
     try {
         const formData = await request.formData()
-        // @ts-expect-error - FormData type conflict between Node.js and Web API
         const file = formData.get('file') as File | null
 
         if (!file) {
