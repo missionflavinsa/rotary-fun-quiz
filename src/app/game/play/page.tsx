@@ -1664,6 +1664,9 @@ export default function PlayGamePage() {
                                             </div>
                                         </div>
                                     )}
+
+                                    {/* Inline Teacher Evaluation for Single Player - Integer/Subjective */}
+                                    {gamePhase === 'question' && false && null /* evaluation shows in result phase */}
                                 </div>
                             )}
 
@@ -1953,6 +1956,18 @@ export default function PlayGamePage() {
                                                             </div>
                                                         )}
 
+                                                        {/* Subjective - Submit for Teacher Evaluation */}
+                                                        {(q.type === 'subjective' || q.type === 'integer') && !hasAnswered && (
+                                                            <div className="text-center">
+                                                                <button
+                                                                    onClick={() => handleTabAnswer(i, q.type === 'subjective' ? 'submitted_on_scratchpad' : (document.getElementById(`answer-input-${i}`) as HTMLInputElement)?.value || 'no answer')}
+                                                                    className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 rounded-xl font-bold hover:from-green-600 hover:to-emerald-600 transition shadow-lg"
+                                                                >
+                                                                    ✓ Submit for Teacher Evaluation
+                                                                </button>
+                                                            </div>
+                                                        )}
+
                                                         {/* Result State - Show teacher scoring or result based on question type */}
                                                         {hasAnswered && (
                                                             <>
@@ -2039,50 +2054,39 @@ export default function PlayGamePage() {
                             >
                                 {/* Teacher Scoring UI for Integer/Subjective */}
                                 {awaitingTeacherScore && currentQuestion && (currentQuestion.type === 'integer' || currentQuestion.type === 'subjective') ? (
-                                    <div className="space-y-6">
-                                        <h1 className="text-3xl font-bold text-white mb-4">📝 Teacher Scoring</h1>
-                                        <p className="text-white/70 mb-2">
-                                            <span className="font-bold text-yellow-400">{selectedStudent?.full_name}</span> answered:
-                                        </p>
+                                    <div className="text-center py-4 rounded-2xl border bg-amber-500/10 border-amber-500/30 max-w-lg mx-auto">
+                                        <p className="text-amber-400 font-bold text-xl mb-4">📝 Teacher Evaluation</p>
 
-                                        {/* Show correct answer */}
-                                        <div className="bg-white/10 rounded-xl p-6 mb-6">
-                                            <p className="text-sm text-white/60 mb-2">Expected Answer:</p>
-                                            <p className="text-xl font-bold text-green-400 mb-4">{currentQuestion.correct_answer}</p>
-                                            <p className="text-sm text-white/60 mb-1">Student's answer is on the blackboard</p>
+                                        {/* Show student's answer */}
+                                        <div className="bg-white/10 rounded-xl p-4 mb-3 mx-6">
+                                            <p className="text-white/60 text-sm mb-1">Student's Answer:</p>
+                                            <p className="text-white font-bold text-lg">{selectedAnswer || 'Submitted on scratchpad'}</p>
                                         </div>
 
-                                        <p className="text-lg text-white/80 mb-4">Award points based on the answer quality:</p>
+                                        {/* Show expected answer */}
+                                        <div className="bg-green-500/10 rounded-xl p-4 mb-5 mx-6">
+                                            <p className="text-white/60 text-sm mb-1">Expected Answer:</p>
+                                            <p className="text-green-400 font-bold text-lg">{currentQuestion.correct_answer}</p>
+                                        </div>
 
-                                        {/* Point buttons 1-10 */}
-                                        <div className="grid grid-cols-5 gap-3 mb-6">
-                                            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(pts => (
+                                        <p className="text-white/70 text-sm mb-4">Award points based on answer quality:</p>
+
+                                        {/* Point buttons - matching panel 2 grid */}
+                                        <div className="grid grid-cols-6 gap-2 px-6 mb-4">
+                                            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, -5].map(pts => (
                                                 <button
                                                     key={pts}
                                                     onClick={() => handleTeacherAwardPoints(pts)}
-                                                    className="py-4 bg-gradient-to-br from-green-500/30 to-emerald-500/30 border-2 border-green-400/50 rounded-xl font-bold text-lg text-green-400 hover:from-green-500/50 hover:to-emerald-500/50 hover:border-green-400 transition transform hover:scale-105"
+                                                    className={`py-3 rounded-lg font-bold text-base transition transform hover:scale-105 ${pts < 0
+                                                        ? 'bg-red-500/30 border border-red-500/50 text-red-400 hover:bg-red-500/50'
+                                                        : pts === 0
+                                                            ? 'bg-gray-500/30 border border-gray-500/50 text-gray-400 hover:bg-gray-500/50'
+                                                            : 'bg-green-500/30 border border-green-500/50 text-green-400 hover:bg-green-500/50'
+                                                        }`}
                                                 >
-                                                    +{pts}
+                                                    {pts > 0 ? `+${pts}` : pts}
                                                 </button>
                                             ))}
-                                        </div>
-
-                                        {/* No Points and Penalty buttons */}
-                                        <div className="flex gap-4 justify-center">
-                                            <button
-                                                onClick={() => handleTeacherAwardPoints(0)}
-                                                className="px-8 py-4 bg-gray-500/30 border-2 border-gray-400/50 rounded-xl font-bold text-gray-300 hover:bg-gray-500/50 hover:border-gray-400 transition"
-                                            >
-                                                No Points (0)
-                                            </button>
-                                            {score > 0 && (
-                                                <button
-                                                    onClick={() => handleTeacherAwardPoints(-1)}
-                                                    className="px-8 py-4 bg-red-500/30 border-2 border-red-400/50 rounded-xl font-bold text-red-400 hover:bg-red-500/50 hover:border-red-400 transition"
-                                                >
-                                                    Penalty (-1)
-                                                </button>
-                                            )}
                                         </div>
                                     </div>
                                 ) : (
