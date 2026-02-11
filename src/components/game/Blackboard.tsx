@@ -66,11 +66,14 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
     // Minimize content preservation
     const [minimizedContent, setMinimizedContent] = useState<string | null>(null)
 
+    // Persistence
+    const contentRef = useRef<ImageData | null>(null)
+
     const initCanvas = useCallback(() => {
         const canvas = canvasRef.current
         if (!canvas) return
 
-        const ctx = canvas.getContext('2d')
+        const ctx = canvas.getContext('2d', { willReadFrequently: true })
         if (!ctx) return
 
         const toolbarHeight = 110
@@ -88,6 +91,11 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
 
         ctx.fillStyle = BOARD_BG
         ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+        // Restore from ref if available (resize priority)
+        if (contentRef.current) {
+            ctx.putImageData(contentRef.current, 0, 0)
+        }
     }, [size])
 
     // Resize canvas when dimensions change
@@ -102,22 +110,24 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
         const canvasHeight = size.height - toolbarHeight
         const canvasWidth = size.width
 
+        // Only act if dimensions actually changed
         if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
-            const ctx = canvas.getContext('2d')
-            let imageData: ImageData | null = null
-            if (ctx && canvas.width > 0 && canvas.height > 0) {
-                imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-            }
+            const ctx = canvas.getContext('2d', { willReadFrequently: true })
 
+            // Reset dimensions
             canvas.width = canvasWidth
             canvas.height = canvasHeight
             previewCanvas.width = canvasWidth
             previewCanvas.height = canvasHeight
 
-            if (imageData && ctx) {
+            if (ctx) {
                 ctx.fillStyle = BOARD_BG
                 ctx.fillRect(0, 0, canvas.width, canvas.height)
-                ctx.putImageData(imageData, 0, 0)
+
+                // Restore from ref (safe persistence)
+                if (contentRef.current) {
+                    ctx.putImageData(contentRef.current, 0, 0)
+                }
             } else {
                 initCanvas()
             }
@@ -139,6 +149,8 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                     const img = new Image()
                     img.onload = () => {
                         ctx.drawImage(img, 0, 0)
+                        // Sync ref
+                        contentRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
                     }
                     img.src = minimizedContent
                 }
@@ -304,10 +316,20 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
         setShapeStart(null)
         setSavedImageData(null)
         lastTouchDistance.current = null
+
+        // Save state after drawing
+        const canvas = canvasRef.current
+        if (canvas) {
+            const ctx = canvas.getContext('2d')
+            if (ctx) {
+                contentRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+            }
+        }
     }
 
     const clearCanvas = () => {
         initCanvas()
+        contentRef.current = null // Clear ref too
     }
 
     // ==========================================
@@ -328,6 +350,16 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
     const handleResizeStart = (e: React.MouseEvent | React.TouchEvent) => {
         e.preventDefault()
         e.stopPropagation()
+
+        // Capture state BEFORE resize
+        const canvas = canvasRef.current
+        if (canvas) {
+            const ctx = canvas.getContext('2d')
+            if (ctx) {
+                contentRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+            }
+        }
+
         const { x, y } = getClientXY(e)
         setIsResizing(true)
         setResizeStart({ x, y, w: size.width, h: size.height })

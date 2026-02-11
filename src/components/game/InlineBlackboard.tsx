@@ -35,6 +35,9 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
     const [savedImageData, setSavedImageData] = useState<ImageData | null>(null)
     const [hasInitialized, setHasInitialized] = useState(false)
 
+    // Persistence State
+    const contentRef = useRef<ImageData | null>(null)
+
     // Selection State
     const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
 
@@ -55,32 +58,26 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
     const initCanvas = useCallback(() => {
         const canvas = canvasRef.current
         if (!canvas) return
-        const ctx = canvas.getContext('2d')
+        const ctx = canvas.getContext('2d', { willReadFrequently: true })
         if (!ctx) return
+
         ctx.fillStyle = BOARD_BG
         ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+        // Restore content if exists
+        if (contentRef.current) {
+            ctx.putImageData(contentRef.current, 0, 0)
+        }
     }, [])
 
     // Resize handling (persistence)
     useEffect(() => {
-        if (!canvasRef.current || !isOpen) return
-        const canvas = canvasRef.current
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
-
-        if (hasInitialized) {
-            // Basic persistence attempt - save top portion
-            const saved = ctx.getImageData(0, 0, canvas.width, Math.min(canvas.height, canvasHeight))
-            ctx.fillStyle = BOARD_BG
-            ctx.fillRect(0, 0, canvas.width, canvas.height)
-            ctx.putImageData(saved, 0, 0)
-        } else {
-            setTimeout(() => {
-                initCanvas()
-                setHasInitialized(true)
-            }, 50)
+        if (isOpen) {
+            // When height changes, React clears canvas. We must restore.
+            // We rely on contentRef being up-to-date from handleResizeMouseDown or handleEnd
+            initCanvas()
         }
-    }, [canvasHeight, isOpen, hasInitialized, initCanvas])
+    }, [canvasHeight, isOpen, initCanvas])
 
     const getPosition = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
         const canvas = canvasRef.current
@@ -107,9 +104,12 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
         if (!floatingImage) return
         const canvas = canvasRef.current
         const ctx = canvas?.getContext('2d')
-        if (!ctx) return
+        if (!ctx || !canvas) return
 
         ctx.putImageData(floatingImage.originalData, floatingImage.x, floatingImage.y)
+        // Update content ref after placing
+        contentRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+
         clearSelectionUI()
     }, [floatingImage, clearSelectionUI])
 
@@ -198,6 +198,16 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
     // 3. Mouse Up
     const handleEnd = () => {
         setIsDrawing(false)
+
+        // Save state after drawing
+        const canvas = canvasRef.current
+        if (canvas) {
+            const ctx = canvas.getContext('2d')
+            if (ctx) {
+                contentRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+            }
+        }
+
         if (floatingImage) return
 
         if (tool === 'select' && shapeStart && currentMousePos.current) {
@@ -228,11 +238,15 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
         if (!selectionRect || !savedImageData) return
         const canvas = canvasRef.current
         const ctx = canvas?.getContext('2d')
-        if (!ctx) return
+        if (!ctx || !canvas) return
 
         ctx.putImageData(savedImageData, 0, 0)
         ctx.fillStyle = BOARD_BG
         ctx.fillRect(selectionRect.x, selectionRect.y, selectionRect.w, selectionRect.h)
+
+        // Update hash
+        contentRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+
         clearSelectionUI()
     }
 
@@ -240,7 +254,7 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
         if (!selectionRect || !savedImageData) return
         const canvas = canvasRef.current
         const ctx = canvas?.getContext('2d')
-        if (!ctx) return
+        if (!ctx || !canvas) return
 
         ctx.putImageData(savedImageData, 0, 0)
         const data = ctx.getImageData(selectionRect.x, selectionRect.y, selectionRect.w, selectionRect.h)
@@ -255,6 +269,9 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
         // Erase source
         ctx.fillStyle = BOARD_BG
         ctx.fillRect(selectionRect.x, selectionRect.y, selectionRect.w, selectionRect.h)
+
+        // Update hash (erased state)
+        contentRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
 
         setFloatingImage({
             x: selectionRect.x,
@@ -341,6 +358,16 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
     // Resize Handle (Height)
     const handleResizeMouseDown = (e: React.MouseEvent) => {
         e.preventDefault()
+
+        // Capture current state BEFORE resize starts
+        const canvas = canvasRef.current
+        if (canvas) {
+            const ctx = canvas.getContext('2d')
+            if (ctx) {
+                contentRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+            }
+        }
+
         setIsResizing(true)
         const startY = e.clientY
         const startH = canvasHeight
