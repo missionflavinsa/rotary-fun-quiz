@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 interface Student {
@@ -15,7 +15,6 @@ interface FloatingStudentsProps {
     disabled?: boolean
 }
 
-// Generate a consistent color based on student name
 function getAvatarColor(name: string): string {
     const colors = [
         'from-pink-500 to-rose-500',
@@ -29,7 +28,6 @@ function getAvatarColor(name: string): string {
         'from-cyan-500 to-blue-500',
         'from-fuchsia-500 to-pink-500',
     ]
-
     let hash = 0
     for (let i = 0; i < name.length; i++) {
         hash = name.charCodeAt(i) + ((hash << 5) - hash)
@@ -37,7 +35,6 @@ function getAvatarColor(name: string): string {
     return colors[Math.abs(hash) % colors.length]
 }
 
-// Get initials from name
 function getInitials(name: string): string {
     const parts = name.split(' ')
     if (parts.length >= 2) {
@@ -46,112 +43,176 @@ function getInitials(name: string): string {
     return name.substring(0, 2).toUpperCase()
 }
 
-// Generate position in a grid layout on left/right sides (avoiding center wheel area 25-75%)
-function generatePosition(index: number, total: number): { x: number; y: number; side: 'left' | 'right' } {
-    const side = index % 2 === 0 ? 'left' : 'right'
-    const halfIndex = Math.floor(index / 2)
+// Generate a random position anywhere on screen, avoiding the center wheel area
+function randomScreenPos(): { x: number; y: number } {
+    // Full screen range: x 1-99%, y 3-95%
+    // Avoid center wheel area roughly x: 30-70%, y: 5-75%
+    let x: number, y: number
+    const attempt = Math.random()
 
-    // Create rows - max 8 per column, then wrap to new column
-    const maxPerColumn = 8
-    const column = Math.floor(halfIndex / maxPerColumn)
-    const row = halfIndex % maxPerColumn
-
-    // Vertical spacing with padding
-    const ySpacing = 85 / (Math.min(total / 2, maxPerColumn) + 1)
-    const y = 8 + (row + 0.5) * ySpacing
-
-    // Horizontal: left side columns (2-22%), right side columns (78-98%)
-    // Each column is ~6% wide
-    const xBase = side === 'left'
-        ? 3 + column * 7
-        : 93 - column * 7
-
-    // Small random offset for natural look
-    const xOffset = (Math.random() - 0.5) * 3
-    const yOffset = (Math.random() - 0.5) * 4
-
-    return {
-        x: Math.max(1, Math.min(98, xBase + xOffset)),
-        y: Math.max(5, Math.min(92, y + yOffset)),
-        side
+    if (attempt < 0.5) {
+        // Left side: x 1-28%
+        x = 1 + Math.random() * 27
+        y = 3 + Math.random() * 92
+    } else {
+        // Right side: x 72-99%
+        x = 72 + Math.random() * 27
+        y = 3 + Math.random() * 92
     }
+
+    // Occasionally allow top/bottom crossing through center
+    if (Math.random() < 0.3) {
+        x = 5 + Math.random() * 90 // full width
+        if (Math.random() < 0.5) {
+            y = 78 + Math.random() * 17 // below wheel
+        } else {
+            y = 3 + Math.random() * 5 // above wheel (narrow top band)
+        }
+    }
+
+    return { x, y }
+}
+
+interface BalloonState {
+    student: Student
+    color: string
+    initials: string
+    // Current target position (animated to)
+    targetX: number
+    targetY: number
+    // Animation duration for this leg
+    duration: number
+    // Rotation
+    rotate: number
 }
 
 export function FloatingStudents({ students, selectedStudent, onStudentClick, disabled }: FloatingStudentsProps) {
     const [hoveredStudent, setHoveredStudent] = useState<string | null>(null)
     const [bouncingStudent, setBouncingStudent] = useState<string | null>(null)
+    const [balloons, setBalloons] = useState<BalloonState[]>([])
+    const intervalsRef = useRef<NodeJS.Timeout[]>([])
 
-    // Generate stable positions for all students
-    const studentPositions = useMemo(() => {
-        return students.map((student, index) => ({
-            ...student,
-            ...generatePosition(index, students.length),
-            color: getAvatarColor(student.full_name),
-            initials: getInitials(student.full_name),
-            animationDelay: index * 0.05,
-            floatDuration: 2.5 + Math.random() * 1.5,
-            floatDistance: 8 + Math.random() * 8,
-            driftDistance: 3 + Math.random() * 5, // Horizontal drift
-            driftDuration: 4 + Math.random() * 3,
-        }))
+    // Initialize balloons with random positions
+    useEffect(() => {
+        const initial: BalloonState[] = students.map((student) => {
+            const pos = randomScreenPos()
+            return {
+                student,
+                color: getAvatarColor(student.full_name),
+                initials: getInitials(student.full_name),
+                targetX: pos.x,
+                targetY: pos.y,
+                duration: 6 + Math.random() * 6,
+                rotate: (Math.random() - 0.5) * 10,
+            }
+        })
+        setBalloons(initial)
+
+        // Clear old intervals
+        intervalsRef.current.forEach(clearInterval)
+        intervalsRef.current = []
+
+        // Each balloon gets its own interval to pick a new random destination
+        const newIntervals = students.map((_, idx) => {
+            // Stagger the first move
+            const firstDelay = 3000 + Math.random() * 5000
+            const moveInterval = 5000 + Math.random() * 7000 // 5-12s between moves
+
+            const timeout = setTimeout(() => {
+                // First move
+                setBalloons(prev => {
+                    const next = [...prev]
+                    if (next[idx]) {
+                        const pos = randomScreenPos()
+                        next[idx] = {
+                            ...next[idx],
+                            targetX: pos.x,
+                            targetY: pos.y,
+                            duration: 6 + Math.random() * 8,
+                            rotate: (Math.random() - 0.5) * 15,
+                        }
+                    }
+                    return next
+                })
+
+                // Then keep moving periodically
+                const interval = setInterval(() => {
+                    setBalloons(prev => {
+                        const next = [...prev]
+                        if (next[idx]) {
+                            const pos = randomScreenPos()
+                            next[idx] = {
+                                ...next[idx],
+                                targetX: pos.x,
+                                targetY: pos.y,
+                                duration: 6 + Math.random() * 8,
+                                rotate: (Math.random() - 0.5) * 15,
+                            }
+                        }
+                        return next
+                    })
+                }, moveInterval)
+
+                intervalsRef.current.push(interval)
+            }, firstDelay)
+
+            return timeout as unknown as NodeJS.Timeout
+        })
+
+        intervalsRef.current.push(...newIntervals)
+
+        return () => {
+            intervalsRef.current.forEach(clearInterval)
+            intervalsRef.current = []
+        }
     }, [students])
 
-    // Handle balloon click - add bounce effect
-    const handleBalloonClick = (student: Student) => {
+    const handleBalloonClick = useCallback((student: Student) => {
         if (disabled) return
         setBouncingStudent(student.id)
         setTimeout(() => setBouncingStudent(null), 500)
         onStudentClick?.(student)
-    }
+    }, [disabled, onStudentClick])
 
     return (
         <div className="fixed inset-0 pointer-events-none z-10 overflow-hidden">
             <AnimatePresence>
-                {studentPositions.map((student) => {
-                    const isSelected = selectedStudent?.id === student.id
-                    const isHovered = hoveredStudent === student.id
-                    const isBouncing = bouncingStudent === student.id
+                {balloons.map((balloon) => {
+                    const isSelected = selectedStudent?.id === balloon.student.id
+                    const isHovered = hoveredStudent === balloon.student.id
+                    const isBouncing = bouncingStudent === balloon.student.id
 
                     return (
                         <motion.div
-                            key={student.id}
-                            initial={{ opacity: 0, scale: 0, y: 50 }}
+                            key={balloon.student.id}
+                            initial={{
+                                left: `${balloon.targetX}%`,
+                                top: `${balloon.targetY}%`,
+                                opacity: 0,
+                                scale: 0,
+                            }}
                             animate={{
+                                left: `${balloon.targetX}%`,
+                                top: `${balloon.targetY}%`,
                                 opacity: isSelected ? 0.2 : 1,
                                 scale: isSelected ? 0.4 : isBouncing ? 1.3 : 1,
-                                y: 0
+                                rotate: balloon.rotate,
                             }}
-                            exit={{ opacity: 0, scale: 0, y: -50 }}
+                            exit={{ opacity: 0, scale: 0 }}
                             transition={{
-                                delay: student.animationDelay,
-                                duration: 0.4,
-                                type: 'spring',
-                                stiffness: 300,
-                                damping: 20
+                                left: { duration: balloon.duration, ease: 'easeInOut' },
+                                top: { duration: balloon.duration, ease: 'easeInOut' },
+                                rotate: { duration: balloon.duration, ease: 'easeInOut' },
+                                opacity: { duration: 0.4 },
+                                scale: { duration: 0.3, type: 'spring', stiffness: 300, damping: 20 },
                             }}
                             className="absolute pointer-events-auto cursor-pointer"
-                            style={{
-                                left: `${student.x}%`,
-                                top: `${student.y}%`,
-                            }}
-                            onClick={() => handleBalloonClick(student)}
-                            onMouseEnter={() => setHoveredStudent(student.id)}
+                            style={{ willChange: 'left, top' }}
+                            onClick={() => handleBalloonClick(balloon.student)}
+                            onMouseEnter={() => setHoveredStudent(balloon.student.id)}
                             onMouseLeave={() => setHoveredStudent(null)}
                         >
-                            {/* Floating + Drifting animation wrapper */}
-                            <motion.div
-                                animate={{
-                                    y: [0, -student.floatDistance, 0],
-                                    x: [-student.driftDistance / 2, student.driftDistance / 2, -student.driftDistance / 2],
-                                    rotate: [-3, 3, -3]
-                                }}
-                                transition={{
-                                    duration: student.floatDuration,
-                                    repeat: Infinity,
-                                    ease: 'easeInOut'
-                                }}
-                                className="flex flex-col items-center"
-                            >
+                            <div className="flex flex-col items-center">
                                 {/* Balloon string */}
                                 <svg
                                     width="2"
@@ -172,42 +233,34 @@ export function FloatingStudents({ students, selectedStudent, onStudentClick, di
                                     whileTap={{ scale: 0.9 }}
                                     className={`
                                         w-12 h-12 md:w-14 md:h-14 rounded-full 
-                                        bg-gradient-to-br ${student.color}
+                                        bg-gradient-to-br ${balloon.color}
                                         flex items-center justify-center
                                         shadow-lg shadow-black/30
                                         border-2 border-white/40
                                         relative overflow-hidden
-                                        transition-all duration-200
+                                        transition-colors duration-200
                                         ${isHovered ? 'ring-4 ring-white/60 ring-offset-2 ring-offset-transparent' : ''}
                                         ${disabled ? 'opacity-40 grayscale' : ''}
                                     `}
                                 >
-                                    {/* Shine effect */}
                                     <div className="absolute top-1 left-2 w-3 h-3 bg-white/50 rounded-full blur-sm" />
                                     <div className="absolute top-2.5 left-3.5 w-1.5 h-1.5 bg-white/80 rounded-full" />
-
-                                    {/* Initials */}
                                     <span className="text-white font-bold text-base md:text-lg drop-shadow-lg">
-                                        {student.initials}
+                                        {balloon.initials}
                                     </span>
                                 </motion.div>
 
-                                {/* Name label - always visible but more prominent on hover */}
+                                {/* Name label */}
                                 <motion.div
-                                    initial={{ opacity: 0.7 }}
                                     animate={{ opacity: isHovered ? 1 : 0.7, scale: isHovered ? 1.1 : 1 }}
-                                    className={`
-                                        mt-1.5 px-2 py-0.5 rounded-full
-                                        bg-black/50 backdrop-blur-sm
-                                        border border-white/20
-                                    `}
+                                    className="mt-1.5 px-2 py-0.5 rounded-full bg-black/50 backdrop-blur-sm border border-white/20"
                                 >
                                     <span className="text-white text-[10px] md:text-xs font-medium whitespace-nowrap max-w-[80px] truncate block">
-                                        {student.full_name.split(' ')[0]}
+                                        {balloon.student.full_name.split(' ')[0]}
                                     </span>
                                 </motion.div>
 
-                                {/* Hover full name tooltip */}
+                                {/* Hover tooltip */}
                                 <AnimatePresence>
                                     {isHovered && (
                                         <motion.div
@@ -217,13 +270,13 @@ export function FloatingStudents({ students, selectedStudent, onStudentClick, di
                                             className="absolute -top-12 left-1/2 -translate-x-1/2 z-50"
                                         >
                                             <div className="px-3 py-1.5 bg-white text-gray-800 rounded-lg shadow-xl text-sm font-semibold whitespace-nowrap">
-                                                {student.full_name}
+                                                {balloon.student.full_name}
                                                 <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white rotate-45" />
                                             </div>
                                         </motion.div>
                                     )}
                                 </AnimatePresence>
-                            </motion.div>
+                            </div>
                         </motion.div>
                     )
                 })}

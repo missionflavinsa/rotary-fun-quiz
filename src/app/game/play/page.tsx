@@ -1614,6 +1614,19 @@ export default function PlayGamePage() {
                                         </div>
                                     )}
 
+                                    {/* Universal Scratchpad Button - available for ALL question types */}
+                                    {currentQuestion.type !== 'subjective' && (
+                                        <div className="flex justify-center mt-6">
+                                            <button
+                                                onClick={() => setShowBlackboard(true)}
+                                                className="inline-flex items-center gap-3 px-6 py-3 bg-slate-700/50 hover:bg-slate-700 border border-white/10 hover:border-amber-400/50 rounded-xl font-medium text-white/80 hover:text-white transition shadow-lg transform hover:scale-105"
+                                            >
+                                                <PenTool className="w-4 h-4 text-amber-400" />
+                                                Open Scratchpad
+                                            </button>
+                                        </div>
+                                    )}
+
                                     {/* Integer Input for Single Panel */}
                                     {currentQuestion.type === 'integer' && (
                                         <div className="max-w-md mx-auto">

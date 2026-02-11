@@ -14,7 +14,7 @@ interface BlackboardProps {
 
 type Tool = 'pen' | 'eraser' | 'line' | 'rectangle' | 'circle'
 
-const BOARD_BG = '#1e3a5f' // Dark blue chalkboard color
+const BOARD_BG = '#000000' // Pure black background
 
 const COLORS = [
     { name: 'White', value: '#FFFFFF' },
@@ -348,7 +348,7 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                     top: position.y,
                     width: isMinimized ? 320 : size.width,
                     height: isMinimized ? 52 : size.height,
-                    background: 'linear-gradient(145deg, #2d4a6f 0%, #1e3a5f 50%, #1a3050 100%)'
+                    background: 'linear-gradient(145deg, #1a1a1a 0%, #000000 50%, #0a0a0a 100%)'
                 }}
             >
                 {/* Header */}
