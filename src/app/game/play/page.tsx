@@ -281,28 +281,9 @@ export default function PlayGamePage() {
                         }
                     }
 
-                    // Method 3: Fallback — fetch questions with NULL subtopic_id that match via subject
-                    // This catches questions that were created without being assigned to a subtopic
-                    if (effectiveSubtopicIds.length > 0) {
-                        let nullSubtopicQuery = supabase.from('questions').select('*')
-                            .is('subtopic_id', null)
-
-                        if (questionTypes.length > 0) {
-                            nullSubtopicQuery = nullSubtopicQuery.in('type', questionTypes)
-                        }
-
-                        const { data: nullSubtopicData, error: nError } = await nullSubtopicQuery.limit(50)
-                        console.log('Method 3 (null subtopic fallback):', { found: nullSubtopicData?.length || 0, error: nError?.message })
-
-                        if (nullSubtopicData) {
-                            const existingIds = new Set(allQuestions.map(q => q.id))
-                            nullSubtopicData.forEach(q => {
-                                if (!existingIds.has(q.id)) {
-                                    allQuestions.push(q)
-                                }
-                            })
-                        }
-                    }
+                    // Method 3: Fallback REMOVED for strict filtering
+                    // We only want questions that explicitly match subtopics (Method 1)
+                    // or are strictly linked to this class (Method 2).
 
                     if (allQuestions.length > 0) {
                         setLoadingProgress(100)
@@ -637,7 +618,7 @@ export default function PlayGamePage() {
         // REAL-TIME: Save result to game_results table
         if (sessionId) {
             try {
-                if (!tab.currentQuestion.id.startsWith('ai-') && !tab.currentQuestion.id.startsWith('fallback')) {
+                if (tab.currentQuestion && !tab.currentQuestion.id.startsWith('ai-') && !tab.currentQuestion.id.startsWith('fallback')) {
                     await supabase.from('game_results').insert({
                         session_id: sessionId,
                         student_id: tab.selectedStudent.id,
@@ -771,6 +752,33 @@ export default function PlayGamePage() {
         })
 
         // Also track in answeredQuestions so it doesn't get picked again globally
+        setAnsweredQuestions(prev => [...prev, currentQId, newQuestion.id])
+    }
+
+    // Single Player Skip Logic
+    const handleSkipQuestionSinglePlayer = () => {
+        if (!currentQuestion) return
+
+        const currentQId = currentQuestion.id
+
+        // Get available questions excluding current and answered
+        const excludedIds = [...answeredQuestions, currentQId]
+        const availableQs = questions.filter(q => !excludedIds.includes(q.id))
+
+        if (availableQs.length === 0) {
+            setTimeLeft(QUESTION_TIME_LIMIT)
+            return
+        }
+
+        // Pick random new question
+        const newQuestion = availableQs[Math.floor(Math.random() * availableQs.length)]
+
+        setCurrentQuestion(newQuestion)
+        setTimeLeft(QUESTION_TIME_LIMIT)
+        setSelectedAnswer(null)
+        setIsCorrect(null)
+
+        // Mark both as "used/answered" so they don't reappear
         setAnsweredQuestions(prev => [...prev, currentQId, newQuestion.id])
     }
 
@@ -1588,13 +1596,35 @@ export default function PlayGamePage() {
                                             </div>
                                         </div>
 
-                                        <div className={`text-6xl font-mono font-bold my-4 ${timeLeft <= 30 ? 'text-red-400 animate-pulse' : 'text-white'}`}>
-                                            {formatTime(timeLeft)}
+                                        <div className="flex items-center justify-center gap-4 my-4">
+                                            <button
+                                                onClick={() => setTimeLeft(prev => Math.max(0, prev - 60))}
+                                                className="w-12 h-12 rounded-full bg-red-500/20 border border-red-500/50 text-red-400 font-bold text-2xl hover:bg-red-500/40 transition flex items-center justify-center"
+                                                title="Remove 1 minute"
+                                            >
+                                                −
+                                            </button>
+
+                                            <div className={`text-7xl font-mono font-bold ${timeLeft <= 30 ? 'text-red-400 animate-pulse' : 'text-white'}`}>
+                                                {formatTime(timeLeft)}
+                                            </div>
+
+                                            <button
+                                                onClick={() => setTimeLeft(prev => prev + 60)}
+                                                className="w-12 h-12 rounded-full bg-green-500/20 border border-green-500/50 text-green-400 font-bold text-2xl hover:bg-green-500/40 transition flex items-center justify-center"
+                                                title="Add 1 minute"
+                                            >
+                                                +
+                                            </button>
                                         </div>
                                     </div>
 
-                                    <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 mb-8">
-                                        <MathRenderer content={currentQuestion.content} className="text-xl md:text-2xl font-medium leading-relaxed text-center" />
+                                    <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-6 md:p-10 mb-8 min-h-[20vh] flex items-center justify-center">
+                                        <MathRenderer
+                                            content={currentQuestion.content}
+                                            className="font-medium leading-relaxed text-center w-full"
+                                            style={{ fontSize: 'clamp(1.25rem, 3vw, 2.5rem)' }}
+                                        />
                                     </div>
 
                                     {currentQuestion.type === 'mcq' && currentQuestion.options && (
@@ -1603,29 +1633,23 @@ export default function PlayGamePage() {
                                                 <button
                                                     key={idx}
                                                     onClick={() => handleAnswer(option)}
-                                                    className="p-5 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-indigo-400 rounded-xl text-left transition-all"
+                                                    className="p-5 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-indigo-400 rounded-xl text-left transition-all group"
                                                 >
-                                                    <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 font-bold mr-3">
+                                                    <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 font-bold mr-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
                                                         {String.fromCharCode(65 + idx)}
                                                     </span>
-                                                    <MathRenderer content={option} className="text-lg inline" />
+                                                    <MathRenderer
+                                                        content={option}
+                                                        className="inline"
+                                                        style={{ fontSize: 'clamp(1rem, 1.5vw, 1.5rem)' }}
+                                                    />
                                                 </button>
                                             ))}
                                         </div>
                                     )}
 
-                                    {/* Universal Scratchpad Button - available for ALL question types */}
-                                    {currentQuestion.type !== 'subjective' && (
-                                        <div className="flex justify-center mt-6">
-                                            <button
-                                                onClick={() => setShowBlackboard(true)}
-                                                className="inline-flex items-center gap-3 px-6 py-3 bg-slate-700/50 hover:bg-slate-700 border border-white/10 hover:border-amber-400/50 rounded-xl font-medium text-white/80 hover:text-white transition shadow-lg transform hover:scale-105"
-                                            >
-                                                <PenTool className="w-4 h-4 text-amber-400" />
-                                                Open Scratchpad
-                                            </button>
-                                        </div>
-                                    )}
+                                    {/* Universal Scratchpad Button & Skip Button */}
+
 
                                     {/* Integer Input for Single Panel */}
                                     {currentQuestion.type === 'integer' && (
@@ -1660,13 +1684,7 @@ export default function PlayGamePage() {
                                     {currentQuestion.type === 'subjective' && (
                                         <div className="text-center">
                                             <p className="text-white/70 mb-4">Write your answer on the scratchpad</p>
-                                            <button
-                                                onClick={() => setShowBlackboard(true)}
-                                                className="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-amber-500 to-orange-500 rounded-xl font-bold hover:from-amber-600 hover:to-orange-600 transition shadow-lg transform hover:scale-105"
-                                            >
-                                                <PenTool className="w-5 h-5" />
-                                                Open Scratchpad
-                                            </button>
+
                                             <div className="mt-6">
                                                 <button
                                                     onClick={() => handleAnswer('submitted_on_scratchpad')}
@@ -1677,6 +1695,25 @@ export default function PlayGamePage() {
                                             </div>
                                         </div>
                                     )}
+
+                                    {/* Global Game Controls (Scratchpad + Skip) - Visible for ALL Question Types */}
+                                    <div className="flex flex-wrap justify-center gap-4 mt-8 pt-6 border-t border-white/10">
+                                        <button
+                                            onClick={() => setShowBlackboard(true)}
+                                            className="inline-flex items-center gap-3 px-6 py-3 bg-slate-700/50 hover:bg-slate-700 border border-white/10 hover:border-amber-400/50 rounded-xl font-medium text-white/80 hover:text-white transition shadow-lg transform hover:scale-105"
+                                        >
+                                            <PenTool className="w-5 h-5 text-amber-400" />
+                                            Open Scratchpad
+                                        </button>
+
+                                        <button
+                                            onClick={handleSkipQuestionSinglePlayer}
+                                            className="inline-flex items-center gap-3 px-6 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 hover:border-red-500/50 rounded-xl font-medium text-red-400 hover:text-red-300 transition shadow-lg transform hover:scale-105"
+                                        >
+                                            <SkipForward className="w-5 h-5" />
+                                            Skip Question
+                                        </button>
+                                    </div>
 
                                     {/* Inline Teacher Evaluation for Single Player - Integer/Subjective */}
                                     {gamePhase === 'question' && false && null /* evaluation shows in result phase */}

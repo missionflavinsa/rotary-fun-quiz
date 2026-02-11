@@ -143,8 +143,8 @@ export function GameCodeModal({ isOpen, onSuccess, onClose }: GameCodeModalProps
                                 <input
                                     key={index}
                                     ref={el => { inputRefs.current[index] = el }}
-                                    type="text"
-                                    inputMode="numeric"
+                                    type="tel"
+                                    pattern="[0-9]*"
                                     maxLength={1}
                                     value={digit}
                                     onChange={e => handleDigitChange(index, e.target.value)}

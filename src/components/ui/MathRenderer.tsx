@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 interface MathRendererProps {
     content: string
     className?: string
+    style?: React.CSSProperties
 }
 
 // Enhanced chemistry detection and conversion
@@ -135,7 +136,7 @@ const loadKaTeX = (): Promise<void> => {
     return katexLoadPromise
 }
 
-export function MathRenderer({ content, className = '' }: MathRendererProps) {
+export function MathRenderer({ content, className = '', style }: MathRendererProps) {
     const containerRef = useRef<HTMLSpanElement>(null)
     const [htmlContent, setHtmlContent] = useState<string | null>(null)
 
@@ -228,7 +229,7 @@ export function MathRenderer({ content, className = '' }: MathRendererProps) {
             <span
                 ref={containerRef}
                 className={`math-renderer ${className}`}
-                style={{ display: 'inline' }}
+                style={{ display: 'inline', ...style }}
                 dangerouslySetInnerHTML={{ __html: htmlContent }}
             />
         )
@@ -239,7 +240,7 @@ export function MathRenderer({ content, className = '' }: MathRendererProps) {
         <span
             ref={containerRef}
             className={`math-renderer ${className}`}
-            style={{ display: 'inline' }}
+            style={{ display: 'inline', ...style }}
         >
             {content}
         </span>

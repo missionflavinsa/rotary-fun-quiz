@@ -59,15 +59,13 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
     const [shapeStart, setShapeStart] = useState<{ x: number; y: number } | null>(null)
     const [savedImageData, setSavedImageData] = useState<ImageData | null>(null)
 
-    // Persist canvas content when minimized
-    const [minimizedContent, setMinimizedContent] = useState<string | null>(null)
-
-    // Zoom state
+    // Zoom
     const [zoom, setZoom] = useState(1)
-    const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
     const lastTouchDistance = useRef<number | null>(null)
 
-    // Initialize canvas with background
+    // Minimize content preservation
+    const [minimizedContent, setMinimizedContent] = useState<string | null>(null)
+
     const initCanvas = useCallback(() => {
         const canvas = canvasRef.current
         if (!canvas) return
@@ -75,27 +73,24 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
         const ctx = canvas.getContext('2d')
         if (!ctx) return
 
+        const toolbarHeight = 110
+        const canvasHeight = size.height - toolbarHeight
+        const canvasWidth = size.width
+
+        canvas.width = canvasWidth
+        canvas.height = canvasHeight
+
+        const previewCanvas = previewCanvasRef.current
+        if (previewCanvas) {
+            previewCanvas.width = canvasWidth
+            previewCanvas.height = canvasHeight
+        }
+
         ctx.fillStyle = BOARD_BG
         ctx.fillRect(0, 0, canvas.width, canvas.height)
+    }, [size])
 
-        // Add subtle grid pattern for chalkboard effect
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)'
-        ctx.lineWidth = 1
-        for (let i = 0; i < canvas.width; i += 20) {
-            ctx.beginPath()
-            ctx.moveTo(i, 0)
-            ctx.lineTo(i, canvas.height)
-            ctx.stroke()
-        }
-        for (let i = 0; i < canvas.height; i += 20) {
-            ctx.beginPath()
-            ctx.moveTo(0, i)
-            ctx.lineTo(canvas.width, i)
-            ctx.stroke()
-        }
-    }, [])
-
-    // Set up canvas when opened or size changes
+    // Resize canvas when dimensions change
     useEffect(() => {
         if (!isOpen || isMinimized) return
 
@@ -103,26 +98,22 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
         const previewCanvas = previewCanvasRef.current
         if (!canvas || !previewCanvas) return
 
-        const toolbarHeight = 110 // Approximate toolbar height
+        const toolbarHeight = 110
         const canvasHeight = size.height - toolbarHeight
         const canvasWidth = size.width
 
-        // Only resize if dimensions actually changed
         if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
-            // Save current content
             const ctx = canvas.getContext('2d')
             let imageData: ImageData | null = null
             if (ctx && canvas.width > 0 && canvas.height > 0) {
                 imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
             }
 
-            // Set new dimensions
             canvas.width = canvasWidth
             canvas.height = canvasHeight
             previewCanvas.width = canvasWidth
             previewCanvas.height = canvasHeight
 
-            // Restore content or initialize
             if (imageData && ctx) {
                 ctx.fillStyle = BOARD_BG
                 ctx.fillRect(0, 0, canvas.width, canvas.height)
@@ -142,7 +133,6 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                 return
             }
 
-            // Restore content from minimize if available
             if (minimizedContent) {
                 const ctx = canvas.getContext('2d')
                 if (ctx) {
@@ -158,54 +148,75 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
         }
     }, [isOpen, isMinimized, initCanvas, minimizedContent])
 
-    const getMousePosition = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // ==========================================
+    // UNIFIED POSITION HELPERS (mouse + touch)
+    // ==========================================
+
+    const getCanvasPosition = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
         const canvas = canvasRef.current
         if (!canvas) return { x: 0, y: 0 }
 
         const rect = canvas.getBoundingClientRect()
-        // Account for zoom when calculating position
+        let clientX: number, clientY: number
+
+        if ('touches' in e) {
+            if (e.touches.length === 0) return { x: 0, y: 0 }
+            clientX = e.touches[0].clientX
+            clientY = e.touches[0].clientY
+        } else {
+            clientX = e.clientX
+            clientY = e.clientY
+        }
+
         return {
-            x: (e.clientX - rect.left) / zoom,
-            y: (e.clientY - rect.top) / zoom
+            x: (clientX - rect.left) / zoom,
+            y: (clientY - rect.top) / zoom
         }
     }
 
-    // Wheel zoom handler
+    const getClientXY = (e: MouseEvent | TouchEvent | React.MouseEvent | React.TouchEvent): { x: number; y: number } => {
+        if ('touches' in e) {
+            if (e.touches.length === 0) {
+                // Use changedTouches for touchend
+                if ('changedTouches' in e && e.changedTouches.length > 0) {
+                    return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY }
+                }
+                return { x: 0, y: 0 }
+            }
+            return { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        }
+        return { x: (e as MouseEvent).clientX, y: (e as MouseEvent).clientY }
+    }
+
+    // ==========================================
+    // ZOOM (pinch-to-zoom for 2 fingers)
+    // ==========================================
+
     const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
         e.preventDefault()
         const delta = e.deltaY > 0 ? -0.1 : 0.1
         setZoom(prev => Math.min(3, Math.max(0.5, prev + delta)))
     }
 
-    // Pinch-to-zoom handlers for touch devices
-    const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
-        if (e.touches.length === 2) {
-            const distance = Math.hypot(
-                e.touches[0].clientX - e.touches[1].clientX,
-                e.touches[0].clientY - e.touches[1].clientY
-            )
-            lastTouchDistance.current = distance
+    // ==========================================
+    // DRAWING HANDLERS (mouse + touch unified)
+    // ==========================================
+
+    const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+        // For touch: if 2+ fingers, handle as pinch-to-zoom instead
+        if ('touches' in e) {
+            if (e.touches.length >= 2) {
+                const distance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                )
+                lastTouchDistance.current = distance
+                return
+            }
+            e.preventDefault() // Prevent scrolling for single touch
         }
-    }
 
-    const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
-        if (e.touches.length === 2 && lastTouchDistance.current) {
-            const distance = Math.hypot(
-                e.touches[0].clientX - e.touches[1].clientX,
-                e.touches[0].clientY - e.touches[1].clientY
-            )
-            const delta = (distance - lastTouchDistance.current) / 200
-            setZoom(prev => Math.min(3, Math.max(0.5, prev + delta)))
-            lastTouchDistance.current = distance
-        }
-    }
-
-    const handleTouchEnd = () => {
-        lastTouchDistance.current = null
-    }
-
-    const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        const pos = getMousePosition(e)
+        const pos = getCanvasPosition(e)
         setIsDrawing(true)
 
         const canvas = canvasRef.current
@@ -213,7 +224,6 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
         if (!ctx || !canvas) return
 
         if (tool === 'line' || tool === 'rectangle' || tool === 'circle') {
-            // Save current canvas state for shape preview
             setSavedImageData(ctx.getImageData(0, 0, canvas.width, canvas.height))
             setShapeStart(pos)
         } else {
@@ -222,10 +232,27 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
         }
     }
 
-    const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+        // Handle pinch-to-zoom for 2 fingers
+        if ('touches' in e) {
+            if (e.touches.length >= 2) {
+                const distance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                )
+                if (lastTouchDistance.current) {
+                    const delta = (distance - lastTouchDistance.current) / 200
+                    setZoom(prev => Math.min(3, Math.max(0.5, prev + delta)))
+                }
+                lastTouchDistance.current = distance
+                return
+            }
+            e.preventDefault() // Prevent scrolling for single touch
+        }
+
         if (!isDrawing) return
 
-        const pos = getMousePosition(e)
+        const pos = getCanvasPosition(e)
         const canvas = canvasRef.current
         const ctx = canvas?.getContext('2d')
         if (!ctx || !canvas) return
@@ -238,7 +265,6 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
             ctx.lineJoin = 'round'
             ctx.stroke()
         } else if (tool === 'eraser') {
-            // Eraser draws with board background color
             ctx.lineTo(pos.x, pos.y)
             ctx.strokeStyle = BOARD_BG
             ctx.lineWidth = brushSize * 3
@@ -246,7 +272,6 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
             ctx.lineJoin = 'round'
             ctx.stroke()
         } else if (shapeStart && savedImageData) {
-            // Preview shape while dragging
             ctx.putImageData(savedImageData, 0, 0)
 
             ctx.beginPath()
@@ -278,39 +303,53 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
         setIsDrawing(false)
         setShapeStart(null)
         setSavedImageData(null)
+        lastTouchDistance.current = null
     }
 
     const clearCanvas = () => {
         initCanvas()
     }
 
-    // Drag handling
-    const handleDragStart = (e: React.MouseEvent) => {
+    // ==========================================
+    // DRAG HANDLING (mouse + touch unified)
+    // ==========================================
+
+    const handleDragStart = (e: React.MouseEvent | React.TouchEvent) => {
         e.preventDefault()
+        const { x, y } = getClientXY(e)
         setIsDragging(true)
-        setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y })
+        setDragStart({ x: x - position.x, y: y - position.y })
     }
 
-    // Resize handling
-    const handleResizeStart = (e: React.MouseEvent) => {
+    // ==========================================
+    // RESIZE HANDLING (mouse + touch unified)
+    // ==========================================
+
+    const handleResizeStart = (e: React.MouseEvent | React.TouchEvent) => {
         e.preventDefault()
         e.stopPropagation()
+        const { x, y } = getClientXY(e)
         setIsResizing(true)
-        setResizeStart({ x: e.clientX, y: e.clientY, w: size.width, h: size.height })
+        setResizeStart({ x, y, w: size.width, h: size.height })
     }
 
-    // Global mouse events for drag/resize
+    // ==========================================
+    // GLOBAL MOVE/UP LISTENERS (mouse + touch)
+    // ==========================================
+
     useEffect(() => {
-        const handleMouseMove = (e: MouseEvent) => {
+        const handleMove = (e: MouseEvent | TouchEvent) => {
+            const { x, y } = getClientXY(e)
+
             if (isDragging) {
                 setPosition({
-                    x: Math.max(0, e.clientX - dragStart.x),
-                    y: Math.max(0, e.clientY - dragStart.y)
+                    x: Math.max(0, x - dragStart.x),
+                    y: Math.max(0, y - dragStart.y)
                 })
             }
             if (isResizing) {
-                const deltaX = e.clientX - resizeStart.x
-                const deltaY = e.clientY - resizeStart.y
+                const deltaX = x - resizeStart.x
+                const deltaY = y - resizeStart.y
                 setSize({
                     width: Math.max(400, resizeStart.w + deltaX),
                     height: Math.max(350, resizeStart.h + deltaY)
@@ -318,17 +357,23 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
             }
         }
 
-        const handleMouseUp = () => {
+        const handleEnd = () => {
             setIsDragging(false)
             setIsResizing(false)
         }
 
         if (isDragging || isResizing) {
-            window.addEventListener('mousemove', handleMouseMove)
-            window.addEventListener('mouseup', handleMouseUp)
+            window.addEventListener('mousemove', handleMove)
+            window.addEventListener('mouseup', handleEnd)
+            window.addEventListener('touchmove', handleMove, { passive: false })
+            window.addEventListener('touchend', handleEnd)
+            window.addEventListener('touchcancel', handleEnd)
             return () => {
-                window.removeEventListener('mousemove', handleMouseMove)
-                window.removeEventListener('mouseup', handleMouseUp)
+                window.removeEventListener('mousemove', handleMove)
+                window.removeEventListener('mouseup', handleEnd)
+                window.removeEventListener('touchmove', handleMove)
+                window.removeEventListener('touchend', handleEnd)
+                window.removeEventListener('touchcancel', handleEnd)
             }
         }
     }, [isDragging, isResizing, dragStart, resizeStart])
@@ -351,10 +396,11 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                     background: 'linear-gradient(145deg, #1a1a1a 0%, #000000 50%, #0a0a0a 100%)'
                 }}
             >
-                {/* Header */}
+                {/* Header - draggable via mouse AND touch */}
                 <div
                     className="flex items-center justify-between px-3 py-2 bg-amber-900/80 border-b-2 border-amber-800 cursor-move select-none"
                     onMouseDown={handleDragStart}
+                    onTouchStart={handleDragStart}
                 >
                     <div className="flex items-center gap-2">
                         <GripVertical className="w-4 h-4 text-amber-200/60" />
@@ -364,7 +410,6 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                         <button
                             onClick={() => {
                                 if (!isMinimized) {
-                                    // Save canvas content before minimizing
                                     const canvas = canvasRef.current
                                     if (canvas) {
                                         setMinimizedContent(canvas.toDataURL())
@@ -411,20 +456,20 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                                             }`}
                                         title={t.label}
                                     >
-                                        <t.icon className="w-4 h-4" />
+                                        <t.icon className="w-5 h-5" />
                                     </button>
                                 ))}
                             </div>
 
                             {/* Colors */}
-                            <div className="flex items-center gap-1 bg-slate-700/50 rounded-xl p-1.5">
+                            <div className="flex items-center gap-1.5">
                                 {COLORS.map((c) => (
                                     <button
                                         key={c.value}
                                         onClick={() => setColor(c.value)}
-                                        className={`w-6 h-6 rounded-full transition-all border-2 ${color === c.value
-                                            ? 'border-white scale-110 shadow-lg'
-                                            : 'border-transparent hover:scale-105'
+                                        className={`w-7 h-7 rounded-full border-2 transition-all ${color === c.value
+                                            ? 'border-white scale-125 shadow-lg'
+                                            : 'border-transparent hover:border-white/50 hover:scale-110'
                                             }`}
                                         style={{ backgroundColor: c.value }}
                                         title={c.name}
@@ -478,7 +523,6 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                             <button
                                 onClick={clearCanvas}
                                 className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 transition ml-auto"
-                                title="Clear All"
                             >
                                 <Trash2 className="w-4 h-4" />
                                 <span className="text-sm font-medium">Clear</span>
@@ -505,10 +549,12 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                                     onMouseUp={stopDrawing}
                                     onMouseLeave={stopDrawing}
                                     onWheel={handleWheel}
-                                    onTouchStart={handleTouchStart}
-                                    onTouchMove={handleTouchMove}
-                                    onTouchEnd={handleTouchEnd}
+                                    onTouchStart={startDrawing}
+                                    onTouchMove={draw}
+                                    onTouchEnd={stopDrawing}
+                                    onTouchCancel={stopDrawing}
                                     className={`w-full h-full ${tool === 'eraser' ? 'cursor-cell' : 'cursor-crosshair'}`}
+                                    style={{ touchAction: 'none' }}
                                 />
                             </div>
                             <canvas
@@ -523,10 +569,11 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                             )}
                         </div>
 
-                        {/* Resize Handle */}
+                        {/* Resize Handle - mouse + touch */}
                         <div
                             className="absolute bottom-0 right-0 w-8 h-8 cursor-se-resize flex items-end justify-end p-1 group"
                             onMouseDown={handleResizeStart}
+                            onTouchStart={handleResizeStart}
                         >
                             <Move className="w-4 h-4 text-amber-400/50 group-hover:text-amber-400 transition rotate-90" />
                         </div>

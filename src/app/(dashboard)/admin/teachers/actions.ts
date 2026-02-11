@@ -27,7 +27,10 @@ export async function createTeacher(formData: FormData) {
             email,
             password,
             email_confirm: true,
-            user_metadata: { full_name: name }
+            user_metadata: {
+                full_name: name,
+                role: 'teacher'
+            }
         })
     })
 

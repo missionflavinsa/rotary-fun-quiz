@@ -32,7 +32,17 @@ export default function LoginPage() {
             }
 
             // Check if user is super admin (hardcoded check)
-            if (email === 'admin@gmail.com') {
+            const role = email === 'admin@gmail.com' ? 'admin' : 'teacher'
+
+            // Save login session history
+            await supabase.from('login_history').insert({
+                user_id: data.user.id,
+                email: email,
+                role: role,
+                user_agent: window.navigator.userAgent
+            })
+
+            if (role === 'admin') {
                 router.push('/admin')
             } else {
                 router.push('/teacher')

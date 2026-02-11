@@ -106,7 +106,20 @@ export function FloatingStudents({ students, selectedStudent, onStudentClick, di
                 rotate: (Math.random() - 0.5) * 10,
             }
         })
-        setBalloons(initial)
+
+        // LIMIT BALLOONS FOR PERFORMANCE ON MOBILE/ANDROID
+        // If on mobile (width < 768px), limit to 12 balloons max to prevent lag
+        // On desktop, show up to 30
+        const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+        const maxBalloons = isMobile ? 12 : 30
+
+        // Randomly pick unique students if we have too many
+        if (initial.length > maxBalloons) {
+            const shuffled = initial.sort(() => Math.random() - 0.5)
+            setBalloons(shuffled.slice(0, maxBalloons))
+        } else {
+            setBalloons(initial)
+        }
 
         // Clear old intervals
         intervalsRef.current.forEach(clearInterval)
@@ -207,7 +220,10 @@ export function FloatingStudents({ students, selectedStudent, onStudentClick, di
                                 scale: { duration: 0.3, type: 'spring', stiffness: 300, damping: 20 },
                             }}
                             className="absolute pointer-events-auto cursor-pointer"
-                            style={{ willChange: 'left, top' }}
+                            style={{
+                                willChange: 'transform, opacity',
+                                transform: 'translate3d(0,0,0)' // Force GPU
+                            }}
                             onClick={() => handleBalloonClick(balloon.student)}
                             onMouseEnter={() => setHoveredStudent(balloon.student.id)}
                             onMouseLeave={() => setHoveredStudent(null)}
