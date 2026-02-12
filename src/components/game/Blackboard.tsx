@@ -430,7 +430,7 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
             >
                 {/* Header - draggable via mouse AND touch */}
                 <div
-                    className="flex items-center justify-between px-3 py-2 bg-amber-900/80 border-b-2 border-amber-800 cursor-move select-none"
+                    className="flex items-center justify-between px-3 py-2 bg-amber-900/80 border-b-2 border-amber-800 cursor-move select-none touch-none"
                     onMouseDown={handleDragStart}
                     onTouchStart={handleDragStart}
                 >
