@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation'
 import {
     Sparkles, Play, ChevronRight, Users, BookOpen,
     Layers, FileText, Zap, ArrowLeft, RotateCcw, UserCheck, RefreshCw, Loader2, Brain, Database,
-    Pause, ChevronDown, Clock, Trash2
+    Pause, ChevronDown, Clock, Trash2, Trophy
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -26,6 +26,8 @@ type SavedGame = {
     game_score: number
     used_student_ids: string[]
     started_at: string
+    topic_ids: string[] | null
+    subtopic_ids: string[] | null
     classes: { name: string; section: string }[] | null
     subjects: { name: string }[] | null
 }
@@ -69,6 +71,8 @@ export default function GameSetupPage() {
     const [savedGames, setSavedGames] = useState<SavedGame[]>([])
     const [loadingSavedGames, setLoadingSavedGames] = useState(true)
     const [showSavedGames, setShowSavedGames] = useState(false)
+    const [topicNamesMap, setTopicNamesMap] = useState<Record<string, string>>({})
+    const [subtopicNamesMap, setSubtopicNamesMap] = useState<Record<string, string>>({})
 
     const router = useRouter()
     const supabase = createClient()
@@ -97,13 +101,55 @@ export default function GameSetupPage() {
                 .from('game_sessions')
                 .select(`
                     id, name, class_id, subject_id, num_tabs, game_score, used_student_ids, started_at,
+                    topic_ids, subtopic_ids,
                     classes(name, section),
                     subjects(name)
                 `)
                 .eq('status', 'paused')
                 .order('started_at', { ascending: false })
                 .limit(10)
-            if (data) setSavedGames(data as SavedGame[])
+
+            if (data) {
+                const sessions = data as SavedGame[]
+                setSavedGames(sessions)
+
+                // Gather all unique topic and subtopic IDs
+                const allTopicIds = new Set<string>()
+                const allSubtopicIds = new Set<string>()
+
+                sessions.forEach(s => {
+                    s.topic_ids?.forEach(id => allTopicIds.add(id))
+                    s.subtopic_ids?.forEach(id => allSubtopicIds.add(id))
+                })
+
+                // Fetch Topic Names
+                if (allTopicIds.size > 0) {
+                    const { data: topicsData } = await supabase
+                        .from('topics')
+                        .select('id, name')
+                        .in('id', Array.from(allTopicIds))
+
+                    if (topicsData) {
+                        const tMap: Record<string, string> = {}
+                        topicsData.forEach(t => tMap[t.id] = t.name)
+                        setTopicNamesMap(tMap)
+                    }
+                }
+
+                // Fetch Subtopic Names
+                if (allSubtopicIds.size > 0) {
+                    const { data: subtopicsData } = await supabase
+                        .from('subtopics')
+                        .select('id, name')
+                        .in('id', Array.from(allSubtopicIds))
+
+                    if (subtopicsData) {
+                        const sMap: Record<string, string> = {}
+                        subtopicsData.forEach(s => sMap[s.id] = s.name)
+                        setSubtopicNamesMap(sMap)
+                    }
+                }
+            }
             setLoadingSavedGames(false)
         }
         fetchSavedGames()
@@ -354,20 +400,36 @@ export default function GameSetupPage() {
                                             >
                                                 <div className="flex-1">
                                                     <h4 className="font-medium text-white">{game.name || 'Untitled Game'}</h4>
-                                                    <div className="flex items-center gap-4 mt-1 text-sm text-white/50">
-                                                        <span>{game.classes?.[0]?.name || 'Unknown Class'}</span>
-                                                        <span>•</span>
-                                                        <span>{game.subjects?.[0]?.name || 'Unknown Subject'}</span>
-                                                        <span>•</span>
-                                                        <span className="flex items-center gap-1">
-                                                            <Clock className="w-3 h-3" />
-                                                            {new Date(game.started_at).toLocaleDateString()}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex items-center gap-4 mt-2 text-xs">
-                                                        <span className="text-yellow-400">🏆 {game.game_score} pts</span>
-                                                        <span className="text-cyan-400">{game.num_tabs} panel{game.num_tabs > 1 ? 's' : ''}</span>
-                                                        <span className="text-purple-400">{game.used_student_ids?.length || 0} students played</span>
+                                                    <div className="flex flex-col gap-1 mt-1 text-sm text-white/50">
+                                                        <div className="flex items-center gap-2">
+                                                            <Users className="w-3 h-3 text-cyan-400" />
+                                                            <span className="text-white/70">{game.classes && Array.isArray(game.classes) && game.classes[0] ? `${game.classes[0].name} (${game.classes[0].section})` : 'Unknown Class'}</span>
+                                                            <span className="text-white/20">|</span>
+                                                            <BookOpen className="w-3 h-3 text-purple-400" />
+                                                            <span className="text-white/70">{game.subjects && Array.isArray(game.subjects) && game.subjects[0] ? game.subjects[0].name : 'Unknown Subject'}</span>
+                                                        </div>
+
+                                                        {game.topic_ids && game.topic_ids.length > 0 && (
+                                                            <div className="flex items-start gap-2">
+                                                                <Layers className="w-3 h-3 text-yellow-400 mt-1" />
+                                                                <span className="text-white/60 line-clamp-1">
+                                                                    {game.topic_ids.map(id => topicNamesMap[id]).filter(Boolean).join(', ')}
+                                                                </span>
+                                                            </div>
+                                                        )}
+
+                                                        <div className="flex items-center gap-3 mt-1 text-xs">
+                                                            <span className="flex items-center gap-1 text-white/40">
+                                                                <Clock className="w-3 h-3" />
+                                                                {new Date(game.started_at).toLocaleDateString()}
+                                                            </span>
+                                                            <span className="text-green-400 flex items-center gap-1">
+                                                                <Trophy className="w-3 h-3" /> {game.game_score} pts
+                                                            </span>
+                                                            <span className="text-cyan-400 flex items-center gap-1">
+                                                                <Database className="w-3 h-3" /> {game.num_tabs} panel{game.num_tabs > 1 ? 's' : ''}
+                                                            </span>
+                                                        </div>
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-2">

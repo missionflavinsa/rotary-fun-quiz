@@ -238,6 +238,11 @@ export default function PlayGamePage() {
                         let questionsQuery = supabase.from('questions').select('*')
                             .in('subtopic_id', effectiveSubtopicIds)
 
+                        // STRICT FILTERING: Ensure questions match the selected subject
+                        if (subjectId) {
+                            questionsQuery = questionsQuery.eq('subject_id', subjectId)
+                        }
+
                         if (questionTypes.length > 0) {
                             questionsQuery = questionsQuery.in('type', questionTypes)
                         }
@@ -261,6 +266,11 @@ export default function PlayGamePage() {
                             .from('questions')
                             .select('*')
                             .in('id', linkedQuestionIds.map(l => l.question_id))
+
+                        // STRICT FILTERING: Ensure linked questions ALSO match the selected subject
+                        if (subjectId) {
+                            linkedQuery = linkedQuery.eq('subject_id', subjectId)
+                        }
 
                         // Filter by question types if selected
                         if (questionTypes.length > 0) {
@@ -1737,7 +1747,7 @@ export default function PlayGamePage() {
                                         return (
                                             <div
                                                 key={i}
-                                                className={`border-r border-white/10 h-full overflow-y-auto custom-scrollbar overscroll-contain isolate relative px-6 py-4 ${i === tabs.length - 1 ? 'border-r-0' : ''}`}
+                                                className={`border-r border-white/10 h-full overflow-y-auto custom-scrollbar overscroll-contain isolate relative px-6 py-4 pb-32 ${i === tabs.length - 1 ? 'border-r-0' : ''}`}
                                                 style={{ touchAction: 'pan-y' }}
                                             >
                                                 {/* Panel in Wheel Phase - Show SpinningWheel for Next Student */}
@@ -2070,6 +2080,27 @@ export default function PlayGamePage() {
                                                                         <p className="text-cyan-400 mt-2">
                                                                             +{tab.teacherAwardedPoints !== null ? tab.teacherAwardedPoints : (tab.isCorrect ? q.points : 0)} pts
                                                                         </p>
+
+                                                                        {/* Solution Display for Parallel Play */}
+                                                                        {(q.solution_text || q.solution_image_url) && (
+                                                                            <div className="mt-4 bg-white/5 rounded-xl p-4 text-left border border-white/10">
+                                                                                <p className="text-indigo-300 font-bold text-sm mb-2 flex items-center gap-2">
+                                                                                    <Brain className="w-4 h-4" /> Solution
+                                                                                </p>
+                                                                                {q.solution_text && (
+                                                                                    <p className="text-white/80 text-sm whitespace-pre-wrap leading-relaxed mb-3">
+                                                                                        {q.solution_text}
+                                                                                    </p>
+                                                                                )}
+                                                                                {q.solution_image_url && (
+                                                                                    <img
+                                                                                        src={q.solution_image_url}
+                                                                                        alt="Solution"
+                                                                                        className="max-w-full h-auto rounded-lg border border-white/10 mx-auto"
+                                                                                    />
+                                                                                )}
+                                                                            </div>
+                                                                        )}
 
                                                                         {/* Next Student Button */}
                                                                         <button

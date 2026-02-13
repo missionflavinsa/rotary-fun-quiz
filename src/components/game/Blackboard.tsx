@@ -164,12 +164,17 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
     // UNIFIED POSITION HELPERS (mouse + touch)
     // ==========================================
 
+    // Optimized: Cache rect to avoid reflows
+    const rectRef = useRef<DOMRect | null>(null)
+
     const getCanvasPosition = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
         const canvas = canvasRef.current
         if (!canvas) return { x: 0, y: 0 }
 
-        const rect = canvas.getBoundingClientRect()
-        let clientX: number, clientY: number
+        // Use cached rect if inside a drawing session
+        const rect = rectRef.current || canvas.getBoundingClientRect()
+        let clientX = 0
+        let clientY = 0
 
         if ('touches' in e) {
             if (e.touches.length === 0) return { x: 0, y: 0 }
@@ -215,6 +220,11 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
     // ==========================================
 
     const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+        const canvas = canvasRef.current
+        if (canvas) {
+            rectRef.current = canvas.getBoundingClientRect() // Cache rect on start
+        }
+
         // For touch: if 2+ fingers, handle as pinch-to-zoom instead
         if ('touches' in e) {
             if (e.touches.length >= 2) {
@@ -225,7 +235,8 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                 lastTouchDistance.current = distance
                 return
             }
-            e.preventDefault() // Prevent scrolling for single touch
+            // Prevent scrolling for single touch drawing
+            if (e.cancelable) e.preventDefault()
         }
 
         const pos = getCanvasPosition(e)
@@ -259,7 +270,8 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
                 lastTouchDistance.current = distance
                 return
             }
-            e.preventDefault() // Prevent scrolling for single touch
+            // Prevent scrolling for single touch
+            if (e.cancelable) e.preventDefault()
         }
 
         if (!isDrawing) return
@@ -313,6 +325,7 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
 
     const stopDrawing = () => {
         setIsDrawing(false)
+        rectRef.current = null // Clear cached rect
         setShapeStart(null)
         setSavedImageData(null)
         lastTouchDistance.current = null

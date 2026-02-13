@@ -79,12 +79,32 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
         }
     }, [canvasHeight, isOpen, initCanvas])
 
+    // Optimized: Cache rect to avoid reflows during draw loop
+    const rectRef = useRef<DOMRect | null>(null)
+
     const getPosition = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
         const canvas = canvasRef.current
         if (!canvas) return { x: 0, y: 0 }
-        const rect = canvas.getBoundingClientRect()
-        let clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
-        let clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
+
+        // Use cached rect if available, otherwise get fresh (and cache it if interacting)
+        const rect = rectRef.current || canvas.getBoundingClientRect()
+
+        let clientX = 0
+        let clientY = 0
+
+        if ('touches' in e) {
+            // For stylus/touch, use the first touch point. 
+            // IMPORTANT: Browsers sometimes return float coordinates for high-precision stylus
+            // ensuring we capture those if available (Touch API supports floating point)
+            if (e.touches.length > 0) {
+                clientX = e.touches[0].clientX
+                clientY = e.touches[0].clientY
+            }
+        } else {
+            clientX = e.clientX
+            clientY = e.clientY
+        }
+
         return {
             x: (clientX - rect.left) / zoom,
             y: (clientY - rect.top) / zoom
@@ -117,6 +137,11 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
 
     // 1. Mouse Down
     const handleStart = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+        const canvas = canvasRef.current
+        if (canvas) {
+            rectRef.current = canvas.getBoundingClientRect() // Cache rect on start
+        }
+
         const pos = getPosition(e)
         // Note: Floating image drag is handled by the DOM element's handlers, not canvas
         // BUT if user clicks outside floating image on canvas, we place it.
@@ -133,7 +158,6 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
         setIsDrawing(true)
         currentMousePos.current = pos
 
-        const canvas = canvasRef.current
         const ctx = canvas?.getContext('2d')
         if (!ctx || !canvas) return
 
@@ -150,6 +174,12 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
     // 2. Mouse Move
     const handleMove = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
         if (!isDrawing) return
+
+        // Prevent default touch actions (scrolling) if we are drawing
+        if ('touches' in e && e.cancelable) {
+            e.preventDefault()
+        }
+
         const pos = getPosition(e)
         currentMousePos.current = pos
 
@@ -198,6 +228,8 @@ export function InlineBlackboard({ isOpen, onClose, studentName }: InlineBlackbo
     // 3. Mouse Up
     const handleEnd = () => {
         setIsDrawing(false)
+        rectRef.current = null // Clear cached rect so next interaction gets fresh one in case of resize
+
 
         // Save state after drawing
         const canvas = canvasRef.current
