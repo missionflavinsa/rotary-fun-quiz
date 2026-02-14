@@ -231,17 +231,35 @@ export default function PlayGamePage() {
                         }
                     }
 
-                    const effectiveSubtopicIds = subtopicIds.length > 0 ? subtopicIds : allSubtopicIdsForTopics
+                    // If no topics selected but subject is selected, resolve ALL subtopics for that subject
+                    // Chain: subject → topics → subtopics
+                    let allSubtopicIdsForSubject: string[] = []
+                    if (topicIds.length === 0 && subtopicIds.length === 0 && subjectId) {
+                        const { data: subjectTopics } = await supabase
+                            .from('topics')
+                            .select('id')
+                            .eq('subject_id', subjectId)
+                        if (subjectTopics && subjectTopics.length > 0) {
+                            const { data: subjectSubtopics } = await supabase
+                                .from('subtopics')
+                                .select('id')
+                                .in('topic_id', subjectTopics.map(t => t.id))
+                            if (subjectSubtopics && subjectSubtopics.length > 0) {
+                                allSubtopicIdsForSubject = subjectSubtopics.map(s => s.id)
+                            }
+                        }
+                    }
+
+                    const effectiveSubtopicIds = subtopicIds.length > 0
+                        ? subtopicIds
+                        : allSubtopicIdsForTopics.length > 0
+                            ? allSubtopicIdsForTopics
+                            : allSubtopicIdsForSubject
 
                     // Method 1: Fetch questions by subtopic_id (questions that have subtopic set)
                     if (effectiveSubtopicIds.length > 0) {
                         let questionsQuery = supabase.from('questions').select('*')
                             .in('subtopic_id', effectiveSubtopicIds)
-
-                        // STRICT FILTERING: Ensure questions match the selected subject
-                        if (subjectId) {
-                            questionsQuery = questionsQuery.eq('subject_id', subjectId)
-                        }
 
                         if (questionTypes.length > 0) {
                             questionsQuery = questionsQuery.in('type', questionTypes)
@@ -250,9 +268,7 @@ export default function PlayGamePage() {
                         const { data: questionsData, error: qError } = await questionsQuery.limit(100)
                         console.log('Method 1 (by subtopic):', { found: questionsData?.length || 0, error: qError?.message, subtopicIds: effectiveSubtopicIds })
                         if (questionsData) {
-                            // Extra safety check: filter JS-side to be absolutely sure
-                            const filtered = questionsData.filter(q => !subjectId || q.subject_id === subjectId)
-                            allQuestions = [...filtered]
+                            allQuestions = [...questionsData]
                         }
                     }
 
@@ -271,12 +287,7 @@ export default function PlayGamePage() {
                             .select('*')
                             .in('id', linkedQuestionIds.map(l => l.question_id))
 
-                        // STRICT FILTERING: Ensure linked questions ALSO match the selected subject
-                        if (subjectId) {
-                            linkedQuery = linkedQuery.eq('subject_id', subjectId)
-                        }
-
-                        // STRICT FILTERING (Request 24): Filter by selected topics/subtopics if any
+                        // Filter by selected subtopics if any (ensures subject scope through hierarchy)
                         if (effectiveSubtopicIds.length > 0) {
                             linkedQuery = linkedQuery.in('subtopic_id', effectiveSubtopicIds)
                         }
@@ -293,12 +304,8 @@ export default function PlayGamePage() {
                             // Merge and deduplicate
                             const existingIds = new Set(allQuestions.map(q => q.id))
                             linkedQuestionsData.forEach(q => {
-                                // Double check subject strictness
                                 if (!existingIds.has(q.id)) {
-                                    // Final safety check: if subjectId is set, question MUST match it
-                                    if (!subjectId || q.subject_id === subjectId) {
-                                        allQuestions.push(q)
-                                    }
+                                    allQuestions.push(q)
                                 }
                             })
                         }

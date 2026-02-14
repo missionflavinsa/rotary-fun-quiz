@@ -28,8 +28,8 @@ type SavedGame = {
     started_at: string
     topic_ids: string[] | null
     subtopic_ids: string[] | null
-    classes: { name: string; section: string }[] | null
-    subjects: { name: string }[] | null
+    classes: { name: string; section: string } | { name: string; section: string }[] | null
+    subjects: { name: string } | { name: string }[] | null
 }
 
 const containerVariants = {
@@ -403,10 +403,10 @@ export default function GameSetupPage() {
                                                     <div className="flex flex-col gap-1 mt-1 text-sm text-white/50">
                                                         <div className="flex items-center gap-2">
                                                             <Users className="w-3 h-3 text-cyan-400" />
-                                                            <span className="text-white/70">{game.classes && Array.isArray(game.classes) && game.classes[0] ? `${game.classes[0].name} (${game.classes[0].section})` : 'Unknown Class'}</span>
+                                                            <span className="text-white/70">{(() => { const c = game.classes ? (Array.isArray(game.classes) ? game.classes[0] : game.classes) : null; return c ? `${c.name} (${c.section})` : 'Unknown Class'; })()}</span>
                                                             <span className="text-white/20">|</span>
                                                             <BookOpen className="w-3 h-3 text-purple-400" />
-                                                            <span className="text-white/70">{game.subjects && Array.isArray(game.subjects) && game.subjects[0] ? game.subjects[0].name : 'Unknown Subject'}</span>
+                                                            <span className="text-white/70">{(() => { const s = game.subjects ? (Array.isArray(game.subjects) ? game.subjects[0] : game.subjects) : null; return s ? s.name : 'Unknown Subject'; })()}</span>
                                                         </div>
 
                                                         {game.topic_ids && game.topic_ids.length > 0 && (

@@ -227,6 +227,7 @@ export default function QuestionsScreen() {
                 points: parseInt(formPoints) || 10,
                 correct_answer: formCorrectAnswer,
                 options: formType === 'mcq' ? formOptions.filter(Boolean) : null,
+                subtopic_id: formSubtopic || null,
                 solution_text: formSolutionText || null,
                 solution_image_url: finalImageUrl || null
             };
