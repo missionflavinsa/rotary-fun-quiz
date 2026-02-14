@@ -323,6 +323,22 @@ export default function QuestionsPage() {
         setFormSolutionText(q.solution_text || '')
         setSolutionImageFile(null)
         setSolutionImagePreview(q.solution_image_url || '')
+
+        // Fix: Populate Subject and Topic based on subtopic_id
+        if (q.subtopic_id) {
+            const subtopic = subtopics.find(s => s.id === q.subtopic_id)
+            if (subtopic) {
+                setFormTopic(subtopic.topic_id)
+                const topic = topics.find(t => t.id === subtopic.topic_id)
+                if (topic) {
+                    setFormSubject(topic.subject_id)
+                }
+            }
+        } else {
+            setFormSubject('')
+            setFormTopic('')
+        }
+
         setIsModalOpen(true)
     }
 

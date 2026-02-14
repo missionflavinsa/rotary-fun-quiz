@@ -211,7 +211,7 @@ export default function PlayGamePage() {
                     setTopicNames(fetchedTopicNames)
                     setSubtopicNames(fetchedSubtopicNames)
 
-                    await generateQuestionsWithAI(fetchedSubjectName, fetchedTopicNames, fetchedSubtopicNames)
+                    await generateQuestionsWithAI(fetchedSubjectName, fetchedTopicNames, fetchedSubtopicNames, studentsData?.length || 5)
                 } else {
                     // Question Bank only
                     setLoadingMessage('Searching for questions in database...')
@@ -249,7 +249,11 @@ export default function PlayGamePage() {
 
                         const { data: questionsData, error: qError } = await questionsQuery.limit(100)
                         console.log('Method 1 (by subtopic):', { found: questionsData?.length || 0, error: qError?.message, subtopicIds: effectiveSubtopicIds })
-                        if (questionsData) allQuestions = [...questionsData]
+                        if (questionsData) {
+                            // Extra safety check: filter JS-side to be absolutely sure
+                            const filtered = questionsData.filter(q => !subjectId || q.subject_id === subjectId)
+                            allQuestions = [...filtered]
+                        }
                     }
 
                     // Method 2: Fetch questions linked to this class via question_class_links
@@ -272,6 +276,11 @@ export default function PlayGamePage() {
                             linkedQuery = linkedQuery.eq('subject_id', subjectId)
                         }
 
+                        // STRICT FILTERING (Request 24): Filter by selected topics/subtopics if any
+                        if (effectiveSubtopicIds.length > 0) {
+                            linkedQuery = linkedQuery.in('subtopic_id', effectiveSubtopicIds)
+                        }
+
                         // Filter by question types if selected
                         if (questionTypes.length > 0) {
                             linkedQuery = linkedQuery.in('type', questionTypes)
@@ -284,8 +293,12 @@ export default function PlayGamePage() {
                             // Merge and deduplicate
                             const existingIds = new Set(allQuestions.map(q => q.id))
                             linkedQuestionsData.forEach(q => {
+                                // Double check subject strictness
                                 if (!existingIds.has(q.id)) {
-                                    allQuestions.push(q)
+                                    // Final safety check: if subjectId is set, question MUST match it
+                                    if (!subjectId || q.subject_id === subjectId) {
+                                        allQuestions.push(q)
+                                    }
                                 }
                             })
                         }
@@ -846,7 +859,8 @@ export default function PlayGamePage() {
     const generateQuestionsWithAI = async (
         subject?: string,
         topics?: string[],
-        subtopics?: string[]
+        subtopics?: string[],
+        count?: number
     ) => {
         // Use passed params or fall back to state
         const finalSubject = subject || subjectName || 'General Knowledge'
@@ -858,55 +872,83 @@ export default function PlayGamePage() {
 
         const generatedQuestions: Question[] = []
         // Generate questions equal to total students in the class
-        const numQuestions = students.length || 5
+        const numQuestions = count || students.length || 5
+
+        // Keep track of generated content to avoid duplicates
+        const generatedContent = new Set<string>()
 
         for (let i = 0; i < numQuestions; i++) {
             setLoadingMessage(`Generating question ${i + 1} of ${numQuestions}...`)
             setLoadingProgress(70 + (i / numQuestions) * 25)
 
-            try {
-                console.log(`Generating question ${i + 1}:`, { subject: finalSubject, topics: topicString, subtopic: subtopicString, model: aiModel })
+            // Retry logic for duplicates
+            let attempts = 0
+            const MAX_ATTEMPTS = 3
+            let questionAdded = false
 
-                const res = await fetch('/api/generate-question', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        subject: finalSubject,
-                        topic: topicString,
-                        subtopic: subtopicString,
-                        difficulty: ['easy', 'medium', 'hard'][i % 3],
-                        model: aiModel || 'openai',
-                        questionType: questionTypes[i % questionTypes.length] // Cycle through selected types
-                    })
-                })
+            while (attempts < MAX_ATTEMPTS && !questionAdded) {
+                try {
+                    console.log(`Generating question ${i + 1} (Attempt ${attempts + 1}):`, { subject: finalSubject, topics: topicString, subtopic: subtopicString, model: aiModel })
 
-                if (res.ok) {
-                    const data = await res.json()
-                    const q = data.question
-                    if (q) {
-                        generatedQuestions.push({
-                            id: `ai-${Date.now()}-${i}`,
-                            content: q.content || q.question || '',
-                            type: q.type || 'mcq',
-                            options: q.options || null,
-                            correct_answer: q.correct_answer || q.answer || '',
-                            points: 10,
-                            difficulty: q.difficulty || 'medium'
+                    const res = await fetch('/api/generate-question', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            subject: finalSubject,
+                            topic: topicString,
+                            subtopic: subtopicString,
+                            difficulty: ['easy', 'medium', 'hard'][i % 3], // Rotate difficulty
+                            model: aiModel || 'openai',
+                            questionType: questionTypes[i % questionTypes.length], // Cycle through selected types
+                            avoidContent: Array.from(generatedContent) // Optional: Send previous questions to API to avoid
                         })
-                    }
-                }
-            } catch (err) {
-                console.error('AI generation error:', err)
-            }
+                    })
 
-            // Small delay between requests
-            await new Promise(r => setTimeout(r, 500))
+                    if (res.ok) {
+                        const data = await res.json()
+                        const q = data.question
+                        if (q) {
+                            const content = q.content || q.question || ''
+
+                            // Check for duplicates (simple string match)
+                            if (generatedContent.has(content)) {
+                                console.log('Duplicate question generated, retrying...', content)
+                                attempts++
+                                continue
+                            }
+
+                            generatedQuestions.push({
+                                id: `ai-${Date.now()}-${i}`,
+                                content: content,
+                                type: q.type || 'mcq',
+                                options: q.options || null,
+                                correct_answer: q.correct_answer || q.answer || '',
+                                points: 10,
+                                difficulty: q.difficulty || 'medium'
+                            })
+
+                            generatedContent.add(content)
+                            questionAdded = true
+                        } else {
+                            attempts++
+                        }
+                    } else {
+                        attempts++
+                    }
+                } catch (err) {
+                    console.error('AI generation error:', err)
+                    attempts++
+                }
+
+                // Small delay between requests/retries
+                if (!questionAdded) await new Promise(r => setTimeout(r, 500))
+            }
         }
 
         if (generatedQuestions.length > 0) {
             setQuestions(generatedQuestions)
             setLoadingProgress(100)
-            setLoadingMessage(`Generated ${generatedQuestions.length} questions! Let's play!`)
+            setLoadingMessage(`Generated ${generatedQuestions.length} unique questions! Let's play!`)
             setTimeout(() => setGamePhase('wheel'), 1000)
         } else {
             // No questions could be generated - show error state
