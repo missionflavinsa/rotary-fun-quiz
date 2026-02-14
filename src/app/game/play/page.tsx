@@ -4,11 +4,17 @@ import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createClient } from '@/lib/supabase/client'
-import { SpinningWheel } from '@/components/game/SpinningWheel'
-import { Blackboard } from '@/components/game/Blackboard'
-import { InlineBlackboard } from '@/components/game/InlineBlackboard'
-import { FloatingStudents } from '@/components/game/FloatingStudents'
-import { MathRenderer } from '@/components/ui/MathRenderer'
+import dynamic from 'next/dynamic'
+
+// Lazy load heavy components
+const SpinningWheel = dynamic(() => import('@/components/game/SpinningWheel').then(mod => mod.SpinningWheel), {
+    ssr: false,
+    loading: () => <div className="w-64 h-64 rounded-full border-4 border-white/10 border-t-indigo-500 animate-spin flex items-center justify-center"><Loader2 className="w-8 h-8 text-indigo-400 animate-spin" /></div>
+})
+const Blackboard = dynamic(() => import('@/components/game/Blackboard').then(mod => mod.Blackboard), { ssr: false })
+const InlineBlackboard = dynamic(() => import('@/components/game/InlineBlackboard').then(mod => mod.InlineBlackboard), { ssr: false })
+const FloatingStudents = dynamic(() => import('@/components/game/FloatingStudents').then(mod => mod.FloatingStudents), { ssr: false })
+const MathRenderer = dynamic(() => import('@/components/ui/MathRenderer').then(mod => mod.MathRenderer), { ssr: false })
 import { Trophy, Star, CheckCircle, XCircle, ArrowRight, Home, Sparkles, Zap, Clock, Loader2, Brain, Wand2, PenTool, RefreshCw, AlertTriangle, Save, X, SkipForward } from 'lucide-react'
 import Link from 'next/link'
 
@@ -573,20 +579,19 @@ export default function PlayGamePage() {
                 setScore(prev => prev + points)
             }
 
-            // REAL-TIME: Save result to game_results table
+            // REAL-TIME: Save result to game_results table (ALL question types including AI)
             if (sessionId && tab.selectedStudent && tab.currentQuestion) {
                 try {
-                    if (!tab.currentQuestion.id.startsWith('ai-') && !tab.currentQuestion.id.startsWith('fallback')) {
-                        await supabase.from('game_results').insert({
-                            session_id: sessionId,
-                            student_id: tab.selectedStudent.id,
-                            question_id: tab.currentQuestion.id,
-                            student_answer: answer,
-                            is_correct: isAnswerCorrect,
-                            points_earned: points,
-                            time_taken_seconds: QUESTION_TIME_LIMIT - tab.timeLeft
-                        })
-                    }
+                    const isAI = tab.currentQuestion.id.startsWith('ai-') || tab.currentQuestion.id.startsWith('fallback')
+                    await supabase.from('game_results').insert({
+                        session_id: sessionId,
+                        student_id: tab.selectedStudent.id,
+                        question_id: isAI ? null : tab.currentQuestion.id,
+                        student_answer: isAI ? JSON.stringify({ answer, question_content: tab.currentQuestion.content }) : answer,
+                        is_correct: isAnswerCorrect,
+                        points_earned: points,
+                        time_taken_seconds: QUESTION_TIME_LIMIT - tab.timeLeft
+                    })
                 } catch (err) {
                     console.error('Error saving game result:', err)
                 }
@@ -645,20 +650,19 @@ export default function PlayGamePage() {
             setScore(prev => prev + points)
         }
 
-        // REAL-TIME: Save result to game_results table
-        if (sessionId) {
+        // REAL-TIME: Save result to game_results table (ALL question types including AI)
+        if (sessionId && tab.currentQuestion) {
             try {
-                if (tab.currentQuestion && !tab.currentQuestion.id.startsWith('ai-') && !tab.currentQuestion.id.startsWith('fallback')) {
-                    await supabase.from('game_results').insert({
-                        session_id: sessionId,
-                        student_id: tab.selectedStudent.id,
-                        question_id: tab.currentQuestion.id,
-                        student_answer: tab.selectedAnswer || '',
-                        is_correct: isCorrect,
-                        points_earned: points,
-                        time_taken_seconds: QUESTION_TIME_LIMIT - tab.timeLeft
-                    })
-                }
+                const isAI = tab.currentQuestion.id.startsWith('ai-') || tab.currentQuestion.id.startsWith('fallback')
+                await supabase.from('game_results').insert({
+                    session_id: sessionId,
+                    student_id: tab.selectedStudent.id,
+                    question_id: isAI ? null : tab.currentQuestion.id,
+                    student_answer: isAI ? JSON.stringify({ answer: tab.selectedAnswer || '', question_content: tab.currentQuestion.content }) : (tab.selectedAnswer || ''),
+                    is_correct: isCorrect,
+                    points_earned: points,
+                    time_taken_seconds: QUESTION_TIME_LIMIT - tab.timeLeft
+                })
             } catch (err) {
                 console.error('Error saving game result:', err)
             }
@@ -862,7 +866,7 @@ export default function PlayGamePage() {
         setSpinning(false)
     }
 
-    // Generate questions with AI - receives subject/topic names as parameters or uses state
+    // Generate questions with AI - batch mode: generates all questions in one API call
     const generateQuestionsWithAI = async (
         subject?: string,
         topics?: string[],
@@ -877,85 +881,82 @@ export default function PlayGamePage() {
         const topicString = finalTopics.length > 0 ? finalTopics.join(', ') : 'General'
         const subtopicString = finalSubtopics.length > 0 ? finalSubtopics.join(', ') : ''
 
-        const generatedQuestions: Question[] = []
         // Generate questions equal to total students in the class
         const numQuestions = count || students.length || 5
 
-        // Keep track of generated content to avoid duplicates
-        const generatedContent = new Set<string>()
+        setLoadingMessage(`Generating ${numQuestions} unique questions with AI...`)
+        setLoadingProgress(75)
 
-        for (let i = 0; i < numQuestions; i++) {
-            setLoadingMessage(`Generating question ${i + 1} of ${numQuestions}...`)
-            setLoadingProgress(70 + (i / numQuestions) * 25)
+        const MAX_RETRIES = 2
+        let allQuestions: Question[] = []
 
-            // Retry logic for duplicates
-            let attempts = 0
-            const MAX_ATTEMPTS = 3
-            let questionAdded = false
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                console.log(`Batch generating ${numQuestions} questions (attempt ${attempt + 1}):`, {
+                    subject: finalSubject, topics: topicString, subtopic: subtopicString, model: aiModel
+                })
 
-            while (attempts < MAX_ATTEMPTS && !questionAdded) {
-                try {
-                    console.log(`Generating question ${i + 1} (Attempt ${attempts + 1}):`, { subject: finalSubject, topics: topicString, subtopic: subtopicString, model: aiModel })
-
-                    const res = await fetch('/api/generate-question', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            subject: finalSubject,
-                            topic: topicString,
-                            subtopic: subtopicString,
-                            difficulty: ['easy', 'medium', 'hard'][i % 3], // Rotate difficulty
-                            model: aiModel || 'openai',
-                            questionType: questionTypes[i % questionTypes.length], // Cycle through selected types
-                            avoidContent: Array.from(generatedContent) // Optional: Send previous questions to API to avoid
-                        })
+                const res = await fetch('/api/generate-question', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        subject: finalSubject,
+                        topic: topicString,
+                        subtopic: subtopicString,
+                        model: aiModel || 'openai',
+                        questionTypes: questionTypes,
+                        count: numQuestions
                     })
+                })
 
-                    if (res.ok) {
-                        const data = await res.json()
-                        const q = data.question
-                        if (q) {
+                if (res.ok) {
+                    const data = await res.json()
+                    const batchQuestions = data.questions
+
+                    if (batchQuestions && Array.isArray(batchQuestions) && batchQuestions.length > 0) {
+                        // Deduplicate by content
+                        const seenContent = new Set<string>()
+                        batchQuestions.forEach((q: { content?: string; question?: string; type?: string; options?: string[] | null; correct_answer?: string; answer?: string; difficulty?: string }, idx: number) => {
                             const content = q.content || q.question || ''
-
-                            // Check for duplicates (simple string match)
-                            if (generatedContent.has(content)) {
-                                console.log('Duplicate question generated, retrying...', content)
-                                attempts++
-                                continue
+                            if (content && !seenContent.has(content)) {
+                                seenContent.add(content)
+                                allQuestions.push({
+                                    id: `ai-${Date.now()}-${idx}`,
+                                    content: content,
+                                    type: q.type || 'mcq',
+                                    options: q.options || null,
+                                    correct_answer: q.correct_answer || q.answer || '',
+                                    points: 10,
+                                    difficulty: q.difficulty || 'medium'
+                                })
                             }
+                        })
 
-                            generatedQuestions.push({
-                                id: `ai-${Date.now()}-${i}`,
-                                content: content,
-                                type: q.type || 'mcq',
-                                options: q.options || null,
-                                correct_answer: q.correct_answer || q.answer || '',
-                                points: 10,
-                                difficulty: q.difficulty || 'medium'
-                            })
-
-                            generatedContent.add(content)
-                            questionAdded = true
-                        } else {
-                            attempts++
-                        }
-                    } else {
-                        attempts++
+                        setLoadingProgress(95)
+                        setLoadingMessage(`Generated ${allQuestions.length} unique questions!`)
+                        console.log('Batch generation successful:', { requested: numQuestions, received: allQuestions.length })
+                        break // Success, exit retry loop
                     }
-                } catch (err) {
-                    console.error('AI generation error:', err)
-                    attempts++
                 }
 
-                // Small delay between requests/retries
-                if (!questionAdded) await new Promise(r => setTimeout(r, 500))
+                // If we get here, the response wasn't useful - retry
+                if (attempt < MAX_RETRIES) {
+                    setLoadingMessage(`Retrying generation (attempt ${attempt + 2})...`)
+                    await new Promise(r => setTimeout(r, 1000))
+                }
+            } catch (err) {
+                console.error('AI batch generation error:', err)
+                if (attempt < MAX_RETRIES) {
+                    setLoadingMessage(`Retrying generation (attempt ${attempt + 2})...`)
+                    await new Promise(r => setTimeout(r, 1000))
+                }
             }
         }
 
-        if (generatedQuestions.length > 0) {
-            setQuestions(generatedQuestions)
+        if (allQuestions.length > 0) {
+            setQuestions(allQuestions)
             setLoadingProgress(100)
-            setLoadingMessage(`Generated ${generatedQuestions.length} unique questions! Let's play!`)
+            setLoadingMessage(`Generated ${allQuestions.length} unique questions! Let's play!`)
             setTimeout(() => setGamePhase('wheel'), 1000)
         } else {
             // No questions could be generated - show error state
@@ -1051,13 +1052,14 @@ export default function PlayGamePage() {
                 setScore(prev => prev + pointsEarned)
             }
 
-            // Save result to database (only for non-AI, non-fallback questions)
-            if (sessionId && !currentQuestion.id.startsWith('fallback') && !currentQuestion.id.startsWith('ai-')) {
+            // Save result to database (ALL question types including AI)
+            if (sessionId) {
+                const isAI = currentQuestion.id.startsWith('ai-') || currentQuestion.id.startsWith('fallback')
                 await supabase.from('game_results').insert({
                     session_id: sessionId,
                     student_id: selectedStudent.id,
-                    question_id: currentQuestion.id,
-                    student_answer: answer,
+                    question_id: isAI ? null : currentQuestion.id,
+                    student_answer: isAI ? JSON.stringify({ answer, question_content: currentQuestion.content }) : answer,
                     is_correct: correct,
                     points_earned: pointsEarned,
                     time_taken_seconds: QUESTION_TIME_LIMIT - timeLeft
@@ -1103,13 +1105,14 @@ export default function PlayGamePage() {
         // Update game score
         setScore(prev => prev + points)
 
-        // Save result to database (only for non-AI, non-fallback questions)
-        if (sessionId && !currentQuestion.id.startsWith('fallback') && !currentQuestion.id.startsWith('ai-')) {
+        // Save result to database (ALL question types including AI)
+        if (sessionId) {
+            const isAI = currentQuestion.id.startsWith('ai-') || currentQuestion.id.startsWith('fallback')
             await supabase.from('game_results').insert({
                 session_id: sessionId,
                 student_id: selectedStudent.id,
-                question_id: currentQuestion.id,
-                student_answer: selectedAnswer || '',
+                question_id: isAI ? null : currentQuestion.id,
+                student_answer: isAI ? JSON.stringify({ answer: selectedAnswer || '', question_content: currentQuestion.content }) : (selectedAnswer || ''),
                 is_correct: isCorrectAnswer,
                 points_earned: points,
                 time_taken_seconds: QUESTION_TIME_LIMIT - timeLeft

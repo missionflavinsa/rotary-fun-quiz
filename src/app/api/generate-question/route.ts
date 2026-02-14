@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { generateQuestion } from '@/lib/ai/question-generator'
+import { generateQuestion, generateBatchQuestions } from '@/lib/ai/question-generator'
 
 // Python ML Backend URL (optional - for advanced features)
 const PYTHON_BACKEND_URL = process.env.PYTHON_ML_BACKEND_URL || 'http://localhost:8001'
@@ -13,11 +13,13 @@ export async function POST(request: NextRequest) {
             subtopic,
             difficulty,
             questionType,
+            questionTypes,
             classLevel,
             model,
             usePythonBackend,
             subtopic_id,
-            class_id
+            class_id,
+            count
         } = body
 
         if (!subject || !topic) {
@@ -25,6 +27,23 @@ export async function POST(request: NextRequest) {
                 { error: 'Subject and topic are required' },
                 { status: 400 }
             )
+        }
+
+        // Batch generation mode: generate multiple questions in one API call
+        if (count && count > 1) {
+            const questions = await generateBatchQuestions({
+                subject,
+                topic,
+                subtopic,
+                difficulty: difficulty || 'medium',
+                questionType: questionType || 'mcq',
+                questionTypes: questionTypes || [],
+                classLevel: classLevel || '10',
+                model: model || 'openai',
+                count
+            })
+
+            return NextResponse.json({ questions, count: questions.length })
         }
 
         // Use Python ML Backend if requested
@@ -64,7 +83,7 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // Fallback to direct LLM generation
+        // Fallback to direct LLM generation (single question)
         const question = await generateQuestion({
             subject,
             topic,
@@ -91,3 +110,4 @@ export async function POST(request: NextRequest) {
         )
     }
 }
+

@@ -21,6 +21,7 @@ type GameResult = {
     id: string
     is_correct: boolean
     points_earned: number
+    student_answer?: string | null
     students?: { full_name: string } | null
     questions?: { content: string } | null
 }
@@ -75,7 +76,7 @@ export default function AdminGameHistoryPage() {
         setLoadingResults(true)
         const { data } = await supabase
             .from('game_results')
-            .select('id, is_correct, points_earned, students(full_name), questions(content)')
+            .select('id, is_correct, points_earned, student_answer, students(full_name), questions(content)')
             .eq('session_id', sessionId)
             .order('answered_at', { ascending: true })
 
@@ -285,7 +286,14 @@ export default function AdminGameHistoryPage() {
                                                                 </span>
                                                                 <div className="flex-1">
                                                                     <p className="font-medium text-gray-900">{result.students?.full_name || 'Unknown'}</p>
-                                                                    <p className="text-sm text-gray-500 truncate">{result.questions?.content?.slice(0, 60)}...</p>
+                                                                    <p className="text-sm text-gray-500 truncate">
+                                                                        {result.questions?.content?.slice(0, 60) || (() => {
+                                                                            try {
+                                                                                const parsed = JSON.parse(result.student_answer || '')
+                                                                                return parsed.question_content?.slice(0, 60) || 'AI Question'
+                                                                            } catch { return 'AI Question' }
+                                                                        })()}...
+                                                                    </p>
                                                                 </div>
                                                                 <span className={`px-2 py-1 rounded text-xs font-medium ${result.is_correct ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'
                                                                     }`}>

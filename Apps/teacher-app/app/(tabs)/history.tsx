@@ -18,6 +18,7 @@ type GameResult = {
     id: string;
     is_correct: boolean;
     points_earned: number;
+    student_answer?: string | null;
     students?: { full_name: string } | null;
     questions?: { content: string } | null;
 };
@@ -42,7 +43,7 @@ export default function HistoryScreen() {
         setLoadingResults(true);
         const { data } = await supabase
             .from('game_results')
-            .select('id, is_correct, points_earned, students(full_name), questions(content)')
+            .select('id, is_correct, points_earned, student_answer, students(full_name), questions(content)')
             .eq('session_id', sessionId)
             .order('answered_at', { ascending: true });
         if (data) setGameResults(data as unknown as GameResult[]);
@@ -146,7 +147,14 @@ export default function HistoryScreen() {
                                                 </View>
                                                 <View style={styles.resultInfo}>
                                                     <Text style={styles.resultName}>{result.students?.full_name || 'Unknown'}</Text>
-                                                    <Text style={styles.resultQuestion} numberOfLines={1}>{result.questions?.content?.slice(0, 50)}...</Text>
+                                                    <Text style={styles.resultQuestion} numberOfLines={1}>
+                                                        {result.questions?.content?.slice(0, 50) || (() => {
+                                                            try {
+                                                                const parsed = JSON.parse(result.student_answer || '');
+                                                                return parsed.question_content?.slice(0, 50) || 'AI Question';
+                                                            } catch { return 'AI Question'; }
+                                                        })()}...
+                                                    </Text>
                                                 </View>
                                                 <Text style={[styles.resultPoints, { color: result.is_correct ? '#34d399' : '#6b7280' }]}>
                                                     {result.is_correct ? `+${result.points_earned}` : '0'}

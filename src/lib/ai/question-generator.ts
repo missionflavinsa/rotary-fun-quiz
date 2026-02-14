@@ -364,3 +364,237 @@ export async function generateQuestion(params: GenerateParams): Promise<Generate
             return generateQuestionWithGemini(params)
     }
 }
+
+// ==================== BATCH PROMPT BUILDER ====================
+export interface BatchGenerateParams extends GenerateParams {
+    count: number
+    questionTypes?: string[]
+}
+
+function buildBatchPrompt(params: BatchGenerateParams): string {
+    const { subject, topic, subtopic, count, classLevel = '10', questionTypes } = params
+
+    const typesList = questionTypes && questionTypes.length > 0
+        ? questionTypes.join(', ')
+        : 'mcq, integer, subjective'
+
+    return `
+Generate exactly ${count} UNIQUE and DIFFERENT questions for Class ${classLevel} students on:
+- Subject: ${subject}
+- Topic: ${topic}
+${subtopic ? `- Subtopic: ${subtopic}` : ''}
+
+CRITICAL REQUIREMENTS:
+1. Generate EXACTLY ${count} questions - no more, no less
+2. Each question MUST be completely different from the others - different concepts, different angles
+3. Mix difficulties: include easy, medium, and hard questions
+4. Mix question types from: ${typesList}
+5. For MCQ questions: provide exactly 4 options with only one correct answer
+6. Questions should be suitable for Indian school education (CBSE/ICSE pattern)
+7. Include a brief explanation for each answer
+
+Return the response as a JSON array with EXACTLY ${count} objects in this format:
+[
+  {
+    "content": "Question text here",
+    "type": "mcq",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "correct_answer": "The correct answer",
+    "explanation": "Brief explanation",
+    "difficulty": "easy"
+  },
+  {
+    "content": "Different question text",
+    "type": "integer",
+    "correct_answer": "42",
+    "explanation": "Brief explanation",
+    "difficulty": "medium"
+  }
+]
+
+IMPORTANT: Return ONLY the JSON array, no additional text. Each question must test a DIFFERENT concept or aspect of the topic.
+`
+}
+
+// ==================== BATCH RESPONSE PARSER ====================
+function parseBatchAIResponse(text: string): GeneratedQuestion[] {
+    try {
+        // Try to find JSON array in the response
+        const arrayMatch = text.match(/\[[\s\S]*\]/)
+        if (!arrayMatch) {
+            // Fallback: try to find a single JSON object
+            const objMatch = text.match(/\{[\s\S]*\}/)
+            if (objMatch) {
+                const single = parseAIResponse(text, 'mcq')
+                return single ? [single] : []
+            }
+            return []
+        }
+
+        const parsed = JSON.parse(arrayMatch[0])
+
+        if (!Array.isArray(parsed)) return []
+
+        return parsed
+            .map((item: Record<string, unknown>) => ({
+                content: (item.content || item.question || '') as string,
+                type: (item.type || 'mcq') as 'mcq' | 'integer' | 'subjective',
+                options: item.options as string[] | undefined,
+                correct_answer: (item.correct_answer || item.answer || '') as string,
+                explanation: item.explanation as string | undefined,
+                difficulty: (item.difficulty || 'medium') as 'easy' | 'medium' | 'hard'
+            }))
+            .filter((q: GeneratedQuestion) => q.content && q.correct_answer)
+    } catch (error) {
+        console.error('Failed to parse batch AI response:', error)
+        return []
+    }
+}
+
+// ==================== BATCH GENERATION ====================
+export async function generateBatchQuestions(params: BatchGenerateParams): Promise<GeneratedQuestion[]> {
+    const model = params.model || 'openai'
+    const prompt = buildBatchPrompt(params)
+
+    console.log(`Batch generating ${params.count} questions with model: ${model}`)
+
+    try {
+        let text: string | null = null
+
+        switch (model) {
+            case 'gemini': {
+                const apiKey = process.env.GEMINI_API_KEY
+                if (!apiKey) { console.error('GEMINI_API_KEY not configured'); return [] }
+                const response = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            generationConfig: { temperature: 0.8, maxOutputTokens: 4096 }
+                        })
+                    }
+                )
+                const data = await response.json()
+                if (!response.ok) { console.error('Gemini batch error:', response.status, data); return [] }
+                text = data.candidates?.[0]?.content?.parts?.[0]?.text
+                break
+            }
+            case 'openai': {
+                const apiKey = process.env.OPENAI_API_KEY
+                if (!apiKey) { console.error('OPENAI_API_KEY not configured'); return [] }
+                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                    body: JSON.stringify({
+                        model: 'gpt-4o-mini',
+                        messages: [
+                            { role: 'system', content: 'You are an educational question generator for Indian school exams. Generate questions in JSON format. Always return a valid JSON array.' },
+                            { role: 'user', content: prompt }
+                        ],
+                        temperature: 0.8,
+                        max_tokens: 4096
+                    })
+                })
+                const data = await response.json()
+                if (!response.ok) { console.error('OpenAI batch error:', response.status, data); return [] }
+                text = data.choices?.[0]?.message?.content
+                break
+            }
+            case 'claude': {
+                const apiKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY
+                if (!apiKey) { console.error('CLAUDE/ANTHROPIC_API_KEY not configured'); return [] }
+                const response = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+                    body: JSON.stringify({
+                        model: 'claude-3-haiku-20240307',
+                        max_tokens: 4096,
+                        messages: [{ role: 'user', content: prompt }]
+                    })
+                })
+                const data = await response.json()
+                if (!response.ok) { console.error('Claude batch error:', response.status, data); return [] }
+                text = data.content?.[0]?.text
+                break
+            }
+            case 'deepseek': {
+                const apiKey = process.env.DEEPSEEK_API_KEY
+                if (!apiKey) { console.error('DEEPSEEK_API_KEY not configured'); return [] }
+                const response = await fetch('https://api.deepseek.com/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                    body: JSON.stringify({
+                        model: 'deepseek-chat',
+                        messages: [
+                            { role: 'system', content: 'You are an educational question generator for Indian school exams. Generate questions in JSON format. Always return a valid JSON array.' },
+                            { role: 'user', content: prompt }
+                        ],
+                        temperature: 0.8,
+                        max_tokens: 4096
+                    })
+                })
+                const data = await response.json()
+                if (!response.ok) { console.error('DeepSeek batch error:', response.status, data); return [] }
+                text = data.choices?.[0]?.message?.content
+                break
+            }
+            case 'grok': {
+                const apiKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY
+                if (!apiKey) { console.error('GROK/XAI_API_KEY not configured'); return [] }
+                const response = await fetch('https://api.x.ai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                    body: JSON.stringify({
+                        model: 'grok-beta',
+                        messages: [
+                            { role: 'system', content: 'You are an educational question generator for Indian school exams. Generate questions in JSON format. Always return a valid JSON array.' },
+                            { role: 'user', content: prompt }
+                        ],
+                        temperature: 0.8,
+                        max_tokens: 4096
+                    })
+                })
+                const data = await response.json()
+                if (!response.ok) { console.error('Grok batch error:', response.status, data); return [] }
+                text = data.choices?.[0]?.message?.content
+                break
+            }
+            case 'local': {
+                const apiUrl = process.env.LOCAL_LLM_URL || 'http://localhost:11434/v1/chat/completions'
+                const llmModel = process.env.LOCAL_LLM_MODEL || 'llama3'
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: llmModel,
+                        messages: [
+                            { role: 'system', content: 'You are an educational question generator for Indian school exams. Generate questions in JSON format. Return VALID JSON only. Always return a JSON array.' },
+                            { role: 'user', content: prompt }
+                        ],
+                        temperature: 0.8
+                    })
+                })
+                const data = await response.json()
+                if (!response.ok) { console.error('Local LLM batch error:', response.status, data); return [] }
+                text = data.choices?.[0]?.message?.content
+                break
+            }
+            default:
+                console.error(`Unknown model for batch: ${model}`)
+                return []
+        }
+
+        if (!text) {
+            console.error('Batch generation returned empty response')
+            return []
+        }
+
+        return parseBatchAIResponse(text)
+    } catch (error) {
+        console.error('Batch generation error:', error)
+        return []
+    }
+}
+
