@@ -242,7 +242,6 @@ export function Blackboard({ isOpen, onClose }: BlackboardProps) {
         const pos = getCanvasPosition(e)
         setIsDrawing(true)
 
-        const canvas = canvasRef.current
         const ctx = canvas?.getContext('2d')
         if (!ctx || !canvas) return
 
