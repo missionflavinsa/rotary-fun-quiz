@@ -15,8 +15,9 @@ const Blackboard = dynamic(() => import('@/components/game/Blackboard').then(mod
 const InlineBlackboard = dynamic(() => import('@/components/game/InlineBlackboard').then(mod => mod.InlineBlackboard), { ssr: false })
 const FloatingStudents = dynamic(() => import('@/components/game/FloatingStudents').then(mod => mod.FloatingStudents), { ssr: false })
 const MathRenderer = dynamic(() => import('@/components/ui/MathRenderer').then(mod => mod.MathRenderer), { ssr: false })
-import { Trophy, Star, CheckCircle, XCircle, ArrowRight, Home, Sparkles, Zap, Clock, Loader2, Brain, Wand2, PenTool, RefreshCw, AlertTriangle, Save, X, SkipForward } from 'lucide-react'
+import { Trophy, Star, CheckCircle, XCircle, ArrowRight, Home, Sparkles, Zap, Clock, Loader2, Brain, Wand2, PenTool, RefreshCw, AlertTriangle, Save, X, SkipForward, Volume2, VolumeX } from 'lucide-react'
 import Link from 'next/link'
+import { speakQuestion, stopSpeaking, isSpeaking } from '@/lib/tts'
 
 type Student = { id: string; full_name: string }
 type Question = {
@@ -105,6 +106,9 @@ export default function PlayGamePage() {
     const [showSaveModal, setShowSaveModal] = useState(false)
     const [gameName, setGameName] = useState('')
     const [isSaving, setIsSaving] = useState(false)
+
+    // TTS state
+    const [isSpeakingState, setIsSpeakingState] = useState(false)
 
     const supabase = createClient()
 
@@ -271,7 +275,8 @@ export default function PlayGamePage() {
                             questionsQuery = questionsQuery.in('type', questionTypes)
                         }
 
-                        const { data: questionsData, error: qError } = await questionsQuery.limit(100)
+                        // No limit applied so all matching questions are available locally to avoid repeat across rounds
+                        const { data: questionsData, error: qError } = await questionsQuery
                         console.log('Method 1 (by subtopic):', { found: questionsData?.length || 0, error: qError?.message, subtopicIds: effectiveSubtopicIds })
                         if (questionsData) {
                             allQuestions = [...questionsData]
@@ -303,7 +308,8 @@ export default function PlayGamePage() {
                             linkedQuery = linkedQuery.in('type', questionTypes)
                         }
 
-                        const { data: linkedQuestionsData, error: lError } = await linkedQuery.limit(100)
+                        // No limit to ensure all questions are available locally
+                        const { data: linkedQuestionsData, error: lError } = await linkedQuery
                         console.log('Method 2 (by class link):', { found: linkedQuestionsData?.length || 0, error: lError?.message, classId })
 
                         if (linkedQuestionsData) {
@@ -327,8 +333,9 @@ export default function PlayGamePage() {
                         // Debug: log question types loaded
                         const typeCounts = allQuestions.reduce((acc, q) => { acc[q.type] = (acc[q.type] || 0) + 1; return acc }, {} as Record<string, number>)
                         console.log('Questions loaded from bank:', { total: allQuestions.length, types: typeCounts, questions: allQuestions.map(q => ({ id: q.id, type: q.type, content: q.content.substring(0, 50) })) })
-                        // Shuffle and limit
-                        const shuffled = allQuestions.sort(() => Math.random() - 0.5).slice(0, 50)
+                        
+                        // Shuffle all questions (no limit - we need all for cross-round uniqueness)
+                        const shuffled = allQuestions.sort(() => Math.random() - 0.5)
                         setQuestions(shuffled)
                         setTimeout(() => setGamePhase('wheel'), 500)
                     } else {
@@ -1027,10 +1034,10 @@ export default function PlayGamePage() {
             setTimeLeft(QUESTION_TIME_LIMIT)
             setTimeout(() => setGamePhase('question'), 1500)
         } else {
-            // Generate more questions
+            // Fetch more questions from DB, excluding already answered ones
             setGamePhase('loading')
-            setLoadingMessage('Generating more questions...')
-            await generateQuestionsWithAI()
+            setLoadingMessage('Fetching more questions from database...')
+            await fetchMoreQuestions()
         }
     }
 
@@ -1137,11 +1144,127 @@ export default function PlayGamePage() {
         }
     }
 
+    // Fetch more questions from the database, excluding already-answered ones
+    const fetchMoreQuestions = async () => {
+        setLoadingProgress(50)
+
+        let newQuestions: Question[] = []
+
+        // Build query filtering by subtopics/topics
+        let questionsQuery = supabase.from('questions').select('*')
+
+        if (subtopicIds.length > 0) {
+            questionsQuery = questionsQuery.in('subtopic_id', subtopicIds)
+        } else if (topicIds.length > 0) {
+            const { data: subtopicsData } = await supabase
+                .from('subtopics')
+                .select('id')
+                .in('topic_id', topicIds)
+            if (subtopicsData && subtopicsData.length > 0) {
+                questionsQuery = questionsQuery.in('subtopic_id', subtopicsData.map(s => s.id))
+            }
+        }
+
+        // Filter by question types
+        if (questionTypes.length > 0) {
+            questionsQuery = questionsQuery.in('type', questionTypes)
+        }
+
+        // Exclude already-answered questions
+        if (answeredQuestions.length > 0) {
+            questionsQuery = questionsQuery.not('id', 'in', `(${answeredQuestions.join(',')})`)
+        }
+
+        const { data: questionsData } = await questionsQuery
+        if (questionsData) newQuestions = [...questionsData]
+
+        setLoadingProgress(80)
+
+        // Also check class-linked questions
+        if (classId) {
+            const { data: linkedQuestionIds } = await supabase
+                .from('question_class_links')
+                .select('question_id')
+                .eq('class_id', classId)
+
+            if (linkedQuestionIds && linkedQuestionIds.length > 0) {
+                let linkedQuery = supabase
+                    .from('questions')
+                    .select('*')
+                    .in('id', linkedQuestionIds.map(l => l.question_id))
+
+                if (subtopicIds.length > 0) {
+                    linkedQuery = linkedQuery.in('subtopic_id', subtopicIds)
+                } else if (topicIds.length > 0) {
+                    const { data: topicSubtopics } = await supabase
+                        .from('subtopics')
+                        .select('id')
+                        .in('topic_id', topicIds)
+                    if (topicSubtopics && topicSubtopics.length > 0) {
+                        linkedQuery = linkedQuery.in('subtopic_id', topicSubtopics.map(s => s.id))
+                    }
+                }
+
+                if (questionTypes.length > 0) {
+                    linkedQuery = linkedQuery.in('type', questionTypes)
+                }
+
+                if (answeredQuestions.length > 0) {
+                    linkedQuery = linkedQuery.not('id', 'in', `(${answeredQuestions.join(',')})`)
+                }
+
+                const { data: linkedQuestionsData } = await linkedQuery
+                if (linkedQuestionsData) {
+                    const existingIds = new Set(newQuestions.map(q => q.id))
+                    linkedQuestionsData.forEach(q => {
+                        if (!existingIds.has(q.id)) {
+                            newQuestions.push(q)
+                        }
+                    })
+                }
+            }
+        }
+
+        if (newQuestions.length > 0) {
+            const shuffled = newQuestions.sort(() => Math.random() - 0.5)
+            setQuestions(prev => [...prev, ...shuffled])
+            setLoadingProgress(100)
+            setLoadingMessage('New questions loaded!')
+            setTimeout(() => setGamePhase('wheel'), 500)
+        } else {
+            // Truly no more questions left in DB
+            setLoadingMessage('No more unique questions available for this selection.')
+            setGamePhase('no-questions')
+        }
+    }
+
+    // TTS handler
+    const handleTTSClick = (questionContent: string, options?: string[] | null) => {
+        if (isSpeaking()) {
+            stopSpeaking()
+            setIsSpeakingState(false)
+        } else {
+            speakQuestion(questionContent, options)
+            setIsSpeakingState(true)
+            // Poll to detect when speech ends
+            const interval = setInterval(() => {
+                if (!isSpeaking()) {
+                    setIsSpeakingState(false)
+                    clearInterval(interval)
+                }
+            }, 300)
+        }
+    }
+
     const nextRound = () => {
         if (availableStudents.length === 0) {
             setAvailableStudents(students)
             setSelectedStudentIds([])
         }
+
+        // Stop any ongoing TTS
+        stopSpeaking()
+        setIsSpeakingState(false)
 
         setRound(prev => prev + 1)
         setSelectedStudent(null)
@@ -1150,6 +1273,7 @@ export default function PlayGamePage() {
         setIsCorrect(null)
         setIsAIQuestion(false)
         setTimeLeft(QUESTION_TIME_LIMIT)
+        // NOTE: answeredQuestions is intentionally NOT cleared - prevents repeats across rounds
         setGamePhase('wheel')
     }
 
@@ -1681,12 +1805,28 @@ export default function PlayGamePage() {
                                         </div>
                                     </div>
 
-                                    <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-6 md:p-10 mb-8 min-h-[20vh] flex items-center justify-center">
+                                    <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-6 md:p-10 mb-8 min-h-[20vh] flex flex-col items-center justify-center">
                                         <MathRenderer
                                             content={currentQuestion.content}
                                             className="font-medium leading-relaxed text-center w-full"
                                             style={{ fontSize: 'clamp(1.25rem, 3vw, 2.5rem)' }}
                                         />
+                                        {/* TTS Read Aloud Button */}
+                                        <div className="flex justify-center mt-6 w-full">
+                                            <button
+                                                onClick={() => handleTTSClick(currentQuestion.content, currentQuestion.options)}
+                                                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium text-sm transition-all transform hover:scale-105 ${isSpeakingState
+                                                        ? 'bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30'
+                                                        : 'bg-indigo-500/20 border border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/30'
+                                                    }`}
+                                            >
+                                                {isSpeakingState ? (
+                                                    <><VolumeX className="w-4 h-4" /> Stop Reading</>
+                                                ) : (
+                                                    <><Volume2 className="w-4 h-4" /> Read Aloud 🔊</>
+                                                )}
+                                            </button>
+                                        </div>
                                     </div>
 
                                     {currentQuestion.type === 'mcq' && currentQuestion.options && (
@@ -1987,6 +2127,22 @@ export default function PlayGamePage() {
                                                                 content={q.content}
                                                                 className="text-lg md:text-xl font-medium leading-relaxed text-center"
                                                             />
+                                                            {/* TTS Read Aloud Button */}
+                                                            <div className="flex justify-center mt-3">
+                                                                <button
+                                                                    onClick={() => handleTTSClick(q.content, q.options)}
+                                                                    className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-xs transition-all transform hover:scale-105 ${isSpeakingState
+                                                                            ? 'bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30'
+                                                                            : 'bg-indigo-500/20 border border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/30'
+                                                                        }`}
+                                                                >
+                                                                    {isSpeakingState ? (
+                                                                        <><VolumeX className="w-3.5 h-3.5" /> Stop</>
+                                                                    ) : (
+                                                                        <><Volume2 className="w-3.5 h-3.5" /> Read Aloud 🔊</>
+                                                                    )}
+                                                                </button>
+                                                            </div>
                                                         </div>
 
                                                         {/* Skip Question Button - only show if not answered */}

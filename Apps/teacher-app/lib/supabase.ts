@@ -32,9 +32,32 @@ if (!supabaseUrl || !supabaseAnonKey) {
     console.error('Missing Supabase environment variables! URL:', supabaseUrl ? 'set' : 'MISSING', 'Key:', supabaseAnonKey ? 'set' : 'MISSING')
 }
 
+// Custom storage adapter that handles SSR safely
+const customStorage = {
+    getItem: async (key: string): Promise<string | null> => {
+        // Check if we're in a browser environment
+        if (Platform.OS === 'web' && typeof window === 'undefined') {
+            return null
+        }
+        return AsyncStorage.getItem(key)
+    },
+    setItem: async (key: string, value: string): Promise<void> => {
+        if (Platform.OS === 'web' && typeof window === 'undefined') {
+            return
+        }
+        await AsyncStorage.setItem(key, value)
+    },
+    removeItem: async (key: string): Promise<void> => {
+        if (Platform.OS === 'web' && typeof window === 'undefined') {
+            return
+        }
+        await AsyncStorage.removeItem(key)
+    },
+}
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
-        storage: ExpoStorage,
+        storage: customStorage,
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: false,
