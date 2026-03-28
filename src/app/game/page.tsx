@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation'
 import {
     Sparkles, Play, ChevronRight, Users, BookOpen,
     Layers, FileText, Zap, ArrowLeft, RotateCcw, UserCheck, RefreshCw, Loader2, Brain, Database,
-    Pause, ChevronDown, Clock, Trash2, Trophy
+    Pause, ChevronDown, Clock, Trash2, Trophy, UserPlus, CheckSquare
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -15,6 +15,7 @@ import Link from 'next/link'
 type Teacher = { id: string; full_name: string | null; email: string }
 type ClassItem = { id: string; name: string; section: string }
 type SubjectItem = { id: string; name: string }
+type StudentItem = { id: string; full_name: string }
 type TopicItem = { id: string; name: string }
 type SubtopicItem = { id: string; name: string }
 type SavedGame = {
@@ -46,12 +47,14 @@ export default function GameSetupPage() {
     const [step, setStep] = useState(1)
     const [teachers, setTeachers] = useState<Teacher[]>([])
     const [classes, setClasses] = useState<ClassItem[]>([])
+    const [allStudents, setAllStudents] = useState<StudentItem[]>([])
     const [subjects, setSubjects] = useState<SubjectItem[]>([])
     const [topics, setTopics] = useState<TopicItem[]>([])
     const [subtopics, setSubtopics] = useState<SubtopicItem[]>([])
 
     const [selectedTeacher, setSelectedTeacher] = useState('')
     const [selectedClass, setSelectedClass] = useState('')
+    const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([])
     const [selectedSubject, setSelectedSubject] = useState('')
     const [selectedTopics, setSelectedTopics] = useState<string[]>([])
     const [selectedSubtopics, setSelectedSubtopics] = useState<string[]>([])
@@ -63,6 +66,7 @@ export default function GameSetupPage() {
     // Loading states
     const [loadingTeachers, setLoadingTeachers] = useState(true)
     const [loadingClasses, setLoadingClasses] = useState(true)
+    const [loadingStudents, setLoadingStudents] = useState(false)
     const [loadingSubjects, setLoadingSubjects] = useState(false)
     const [loadingTopics, setLoadingTopics] = useState(false)
     const [loadingSubtopics, setLoadingSubtopics] = useState(false)
@@ -171,6 +175,31 @@ export default function GameSetupPage() {
         fetchClasses()
     }, [])
 
+    // Fetch students when class changes
+    useEffect(() => {
+        if (!selectedClass) {
+            setAllStudents([])
+            setSelectedStudentIds([])
+            return
+        }
+        const fetchStudents = async () => {
+            setLoadingStudents(true)
+            const { data, error } = await supabase
+                .from('students')
+                .select('id, full_name')
+                .eq('class_id', selectedClass)
+                .order('full_name', { ascending: true })
+            console.log('Students for class', selectedClass, ':', data, error)
+            if (data) {
+                setAllStudents(data)
+                // Auto-select all students by default
+                setSelectedStudentIds(data.map(s => s.id))
+            }
+            setLoadingStudents(false)
+        }
+        fetchStudents()
+    }, [selectedClass])
+
     // Fetch subjects when class changes
     useEffect(() => {
         if (!selectedClass) {
@@ -228,6 +257,28 @@ export default function GameSetupPage() {
         fetchSubtopics()
     }, [selectedTopics])
 
+    const toggleStudent = (id: string) => {
+        setSelectedStudentIds(prev =>
+            prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+        )
+    }
+
+    const toggleAllStudents = () => {
+        if (selectedStudentIds.length === allStudents.length) {
+            setSelectedStudentIds([])
+        } else {
+            setSelectedStudentIds(allStudents.map(s => s.id))
+        }
+    }
+
+    const toggleAllTopics = () => {
+        if (selectedTopics.length === topics.length) {
+            setSelectedTopics([])
+        } else {
+            setSelectedTopics(topics.map(t => t.id))
+        }
+    }
+
     const toggleTopic = (id: string) => {
         setSelectedTopics(prev =>
             prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]
@@ -243,6 +294,10 @@ export default function GameSetupPage() {
     const handleStartGame = () => {
         if (!selectedClass || !selectedSubject || !questionSource) {
             alert("Please complete all selections")
+            return
+        }
+        if (selectedStudentIds.length === 0) {
+            alert("Please select at least one student")
             return
         }
         if (questionSource === 'ai' && !aiModel) {
@@ -262,6 +317,7 @@ export default function GameSetupPage() {
         const params = new URLSearchParams({
             teacherId: selectedTeacher || 'guest',
             classId: selectedClass,
+            studentIds: selectedStudentIds.join(','),
             subjectId: selectedSubject,
             topicIds: selectedTopics.join(','),
             subtopicIds: selectedSubtopics.join(','),
@@ -277,17 +333,18 @@ export default function GameSetupPage() {
         switch (step) {
             case 1: return selectedTeacher !== ''
             case 2: return selectedClass !== ''
-            case 3: return selectedSubject !== ''
-            case 4: return selectedTopics.length > 0
-            case 5: return true // Subtopics are optional
-            case 6: return selectedQuestionTypes.length > 0
-            case 7: return questionSource === 'bank' || (questionSource === 'ai' && aiModel !== '')
+            case 3: return selectedStudentIds.length > 0
+            case 4: return selectedSubject !== ''
+            case 5: return selectedTopics.length > 0
+            case 6: return true // Subtopics are optional
+            case 7: return selectedQuestionTypes.length > 0
+            case 8: return questionSource === 'bank' || (questionSource === 'ai' && aiModel !== '')
             default: return false
         }
     }
 
     const nextStep = () => {
-        if (canProceed() && step < 7) setStep(step + 1)
+        if (canProceed() && step < 8) setStep(step + 1)
     }
 
     const prevStep = () => {
@@ -298,6 +355,7 @@ export default function GameSetupPage() {
         setStep(1)
         setSelectedTeacher('')
         setSelectedClass('')
+        setSelectedStudentIds([])
         setSelectedSubject('')
         setSelectedTopics([])
         setSelectedSubtopics([])
@@ -466,10 +524,12 @@ export default function GameSetupPage() {
                         {[
                             { num: 1, label: 'Teacher', icon: UserCheck },
                             { num: 2, label: 'Class', icon: Users },
-                            { num: 3, label: 'Subject', icon: BookOpen },
-                            { num: 4, label: 'Topics', icon: Layers },
-                            { num: 5, label: 'Subtopics', icon: FileText },
-                            { num: 6, label: 'Source', icon: Brain },
+                            { num: 3, label: 'Students', icon: UserPlus },
+                            { num: 4, label: 'Subject', icon: BookOpen },
+                            { num: 5, label: 'Topics', icon: Layers },
+                            { num: 6, label: 'Subtopics', icon: FileText },
+                            { num: 7, label: 'Types', icon: CheckSquare },
+                            { num: 8, label: 'Source', icon: Brain },
                         ].map((s, i) => (
                             <div key={s.num} className="flex items-center">
                                 <button
@@ -484,7 +544,7 @@ export default function GameSetupPage() {
                                     <s.icon className="w-4 h-4" />
                                     <span className="hidden md:inline text-sm font-medium">{s.label}</span>
                                 </button>
-                                {i < 5 && <ChevronRight className={`w-4 h-4 mx-1 ${step > s.num ? 'text-green-400' : 'text-white/20'}`} />}
+                                {i < 7 && <ChevronRight className={`w-4 h-4 mx-1 ${step > s.num ? 'text-green-400' : 'text-white/20'}`} />}
                             </div>
                         ))}
                     </div>
@@ -591,10 +651,85 @@ export default function GameSetupPage() {
                             </motion.div>
                         )}
 
-                        {/* Step 3: Subject Selection */}
+                        {/* Step 3: Student Selection */}
                         {step === 3 && (
                             <motion.div
                                 key="step3"
+                                initial={{ opacity: 0, x: 50 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -50 }}
+                                className="space-y-6"
+                            >
+                                <h2 className="text-2xl font-bold text-center mb-2">Select Students</h2>
+                                <p className="text-center text-white/60 mb-8">Choose which students will participate in this quiz</p>
+
+                                {loadingStudents ? (
+                                    <LoadingSpinner text="Loading students..." />
+                                ) : allStudents.length > 0 ? (
+                                    <>
+                                        {/* Select All / Deselect All */}
+                                        <div className="flex items-center justify-between mb-4">
+                                            <p className="text-white/70 text-sm">
+                                                {selectedStudentIds.length} of {allStudents.length} students selected
+                                            </p>
+                                            <button
+                                                onClick={toggleAllStudents}
+                                                className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-sm transition-all ${
+                                                    selectedStudentIds.length === allStudents.length
+                                                        ? 'bg-red-500/20 border border-red-500/30 text-red-400 hover:bg-red-500/30'
+                                                        : 'bg-green-500/20 border border-green-500/30 text-green-400 hover:bg-green-500/30'
+                                                }`}
+                                            >
+                                                <CheckSquare className="w-4 h-4" />
+                                                {selectedStudentIds.length === allStudents.length ? 'Deselect All' : 'Select All'}
+                                            </button>
+                                        </div>
+
+                                        <motion.div
+                                            variants={containerVariants}
+                                            initial="hidden"
+                                            animate="visible"
+                                            className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3"
+                                        >
+                                            {allStudents.map(student => (
+                                                <motion.button
+                                                    key={student.id}
+                                                    variants={itemVariants}
+                                                    onClick={() => toggleStudent(student.id)}
+                                                    className={`p-4 rounded-xl border-2 transition-all flex items-center gap-3 ${selectedStudentIds.includes(student.id)
+                                                        ? 'bg-gradient-to-r from-green-500/20 to-emerald-500/20 border-green-400'
+                                                        : 'bg-white/5 border-white/10 hover:border-white/30'
+                                                    }`}
+                                                >
+                                                    <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all flex-shrink-0 ${selectedStudentIds.includes(student.id) ? 'bg-green-500 border-green-500' : 'border-white/30'
+                                                    }`}>
+                                                        {selectedStudentIds.includes(student.id) && <span className="text-white text-sm">✓</span>}
+                                                    </div>
+                                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
+                                                        {student.full_name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                                                    </div>
+                                                    <span className="font-medium text-sm truncate">{student.full_name}</span>
+                                                </motion.button>
+                                            ))}
+                                        </motion.div>
+                                    </>
+                                ) : (
+                                    <div className="text-center py-12 text-white/60 bg-white/5 rounded-2xl border border-white/10">
+                                        <Users className="w-12 h-12 mx-auto mb-4 text-yellow-500" />
+                                        <p className="text-lg font-medium mb-2">No students found for this class</p>
+                                        <p className="text-sm">Add students via the Admin panel first.</p>
+                                        <Link href="/admin/students" className="inline-block mt-4 px-4 py-2 bg-indigo-600 rounded-lg hover:bg-indigo-700 transition">
+                                            Add Students
+                                        </Link>
+                                    </div>
+                                )}
+                            </motion.div>
+                        )}
+
+                        {/* Step 4: Subject Selection */}
+                        {step === 4 && (
+                            <motion.div
+                                key="step4"
                                 initial={{ opacity: 0, x: 50 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: -50 }}
@@ -642,10 +777,10 @@ export default function GameSetupPage() {
                             </motion.div>
                         )}
 
-                        {/* Step 4: Topics Selection (Multi-select) */}
-                        {step === 4 && (
+                        {/* Step 5: Topics Selection (Multi-select) */}
+                        {step === 5 && (
                             <motion.div
-                                key="step4"
+                                key="step5"
                                 initial={{ opacity: 0, x: 50 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: -50 }}
@@ -657,31 +792,51 @@ export default function GameSetupPage() {
                                 {loadingTopics ? (
                                     <LoadingSpinner text="Loading topics..." />
                                 ) : topics.length > 0 ? (
-                                    <motion.div
-                                        variants={containerVariants}
-                                        initial="hidden"
-                                        animate="visible"
-                                        className="grid grid-cols-1 sm:grid-cols-2 gap-4"
-                                    >
-                                        {topics.map(topic => (
-                                            <motion.button
-                                                key={topic.id}
-                                                variants={itemVariants}
-                                                onClick={() => toggleTopic(topic.id)}
-                                                className={`p-5 rounded-xl border-2 transition-all flex items-center gap-4 ${selectedTopics.includes(topic.id)
-                                                    ? 'bg-gradient-to-r from-green-500/20 to-emerald-500/20 border-green-400'
-                                                    : 'bg-white/5 border-white/10 hover:border-white/30'
-                                                    }`}
+                                    <>
+                                        {/* Select All / Deselect All */}
+                                        <div className="flex items-center justify-between mb-4">
+                                            <p className="text-white/70 text-sm">
+                                                {selectedTopics.length} of {topics.length} topics selected
+                                            </p>
+                                            <button
+                                                onClick={toggleAllTopics}
+                                                className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-sm transition-all ${
+                                                    selectedTopics.length === topics.length
+                                                        ? 'bg-red-500/20 border border-red-500/30 text-red-400 hover:bg-red-500/30'
+                                                        : 'bg-green-500/20 border border-green-500/30 text-green-400 hover:bg-green-500/30'
+                                                }`}
                                             >
-                                                <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all ${selectedTopics.includes(topic.id) ? 'bg-green-500 border-green-500' : 'border-white/30'
-                                                    }`}>
-                                                    {selectedTopics.includes(topic.id) && <span className="text-white text-sm">✓</span>}
-                                                </div>
-                                                <Layers className="w-5 h-5 text-white/60" />
-                                                <span className="font-medium">{topic.name}</span>
-                                            </motion.button>
-                                        ))}
-                                    </motion.div>
+                                                <CheckSquare className="w-4 h-4" />
+                                                {selectedTopics.length === topics.length ? 'Deselect All' : 'Select All'}
+                                            </button>
+                                        </div>
+
+                                        <motion.div
+                                            variants={containerVariants}
+                                            initial="hidden"
+                                            animate="visible"
+                                            className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+                                        >
+                                            {topics.map(topic => (
+                                                <motion.button
+                                                    key={topic.id}
+                                                    variants={itemVariants}
+                                                    onClick={() => toggleTopic(topic.id)}
+                                                    className={`p-5 rounded-xl border-2 transition-all flex items-center gap-4 ${selectedTopics.includes(topic.id)
+                                                        ? 'bg-gradient-to-r from-green-500/20 to-emerald-500/20 border-green-400'
+                                                        : 'bg-white/5 border-white/10 hover:border-white/30'
+                                                        }`}
+                                                >
+                                                    <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all ${selectedTopics.includes(topic.id) ? 'bg-green-500 border-green-500' : 'border-white/30'
+                                                        }`}>
+                                                        {selectedTopics.includes(topic.id) && <span className="text-white text-sm">✓</span>}
+                                                    </div>
+                                                    <Layers className="w-5 h-5 text-white/60" />
+                                                    <span className="font-medium">{topic.name}</span>
+                                                </motion.button>
+                                            ))}
+                                        </motion.div>
+                                    </>
                                 ) : (
                                     <div className="text-center py-12 text-white/60 bg-white/5 rounded-2xl border border-white/10">
                                         <Layers className="w-12 h-12 mx-auto mb-4 text-yellow-500" />
@@ -695,10 +850,10 @@ export default function GameSetupPage() {
                             </motion.div>
                         )}
 
-                        {/* Step 5: Subtopics Selection (Optional Multi-select) */}
-                        {step === 5 && (
+                        {/* Step 6: Subtopics Selection (Optional Multi-select) */}
+                        {step === 6 && (
                             <motion.div
-                                key="step5"
+                                key="step6"
                                 initial={{ opacity: 0, x: 50 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: -50 }}
@@ -743,10 +898,10 @@ export default function GameSetupPage() {
                             </motion.div>
                         )}
 
-                        {/* Step 6: Question Type Selection (Multi-select) */}
-                        {step === 6 && (
+                        {/* Step 7: Question Type Selection (Multi-select) */}
+                        {step === 7 && (
                             <motion.div
-                                key="step6"
+                                key="step7"
                                 initial={{ opacity: 0, x: 50 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: -50 }}
@@ -797,10 +952,10 @@ export default function GameSetupPage() {
                             </motion.div>
                         )}
 
-                        {/* Step 7: Question Source Selection */}
-                        {step === 7 && (
+                        {/* Step 8: Question Source Selection */}
+                        {step === 8 && (
                             <motion.div
-                                key="step7"
+                                key="step8"
                                 initial={{ opacity: 0, x: 50 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: -50 }}
@@ -951,7 +1106,7 @@ export default function GameSetupPage() {
                             Previous
                         </button>
 
-                        {step < 7 ? (
+                        {step < 8 ? (
                             <button
                                 onClick={nextStep}
                                 disabled={!canProceed()}

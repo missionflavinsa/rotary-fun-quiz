@@ -38,6 +38,7 @@ export default function PlayGamePage() {
     const searchParams = useSearchParams()
     const teacherId = searchParams.get('teacherId')
     const classId = searchParams.get('classId')
+    const studentIdsParam = searchParams.get('studentIds')?.split(',').filter(Boolean) || []
     const subjectId = searchParams.get('subjectId')
     const topicIds = searchParams.get('topicIds')?.split(',').filter(Boolean) || []
     const subtopicIds = searchParams.get('subtopicIds')?.split(',').filter(Boolean) || []
@@ -95,6 +96,9 @@ export default function PlayGamePage() {
     const [topicNames, setTopicNames] = useState<string[]>([])
     const [subtopicNames, setSubtopicNames] = useState<string[]>([])
 
+    // Ref-based safeguard for question non-repeat (avoids stale closures)
+    const usedQuestionIdsRef = useRef<Set<string>>(new Set())
+
     // Timer state
     const [timeLeft, setTimeLeft] = useState(QUESTION_TIME_LIMIT)
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -127,9 +131,13 @@ export default function PlayGamePage() {
                     .from('students')
                     .select('id, full_name')
                     .eq('class_id', classId)
+                // Filter to only selected students if studentIds are provided
                 if (studentsData) {
-                    setStudents(studentsData)
-                    setAvailableStudents(studentsData)
+                    const filtered = studentIdsParam.length > 0
+                        ? studentsData.filter(s => studentIdsParam.includes(s.id))
+                        : studentsData
+                    setStudents(filtered)
+                    setAvailableStudents(filtered)
                 }
 
                 // Step 2: Get subject name for AI context
@@ -442,6 +450,7 @@ export default function PlayGamePage() {
             setScore(session.game_score || 0)
             setSelectedStudentIds(usedIds)
             setAnsweredQuestions(usedQIds)
+            usedQIds.forEach((id: string) => usedQuestionIdsRef.current.add(id))
 
             // Check for full game state snapshot and restore if present
             if (session.game_state) {
@@ -794,6 +803,8 @@ export default function PlayGamePage() {
 
         // Also track in answeredQuestions so it doesn't get picked again globally
         setAnsweredQuestions(prev => [...prev, currentQId, newQuestion.id])
+        usedQuestionIdsRef.current.add(currentQId)
+        usedQuestionIdsRef.current.add(newQuestion.id)
     }
 
     // Single Player Skip Logic
@@ -994,6 +1005,7 @@ export default function PlayGamePage() {
     const handleTimeUp = () => {
         if (currentQuestion) {
             setAnsweredQuestions(prev => [...prev, currentQuestion.id])
+            usedQuestionIdsRef.current.add(currentQuestion.id)
 
             // For MCQ, time's up = wrong answer
             if (currentQuestion.type === 'mcq') {
@@ -1024,8 +1036,8 @@ export default function PlayGamePage() {
             setStudentTotalPoints(studentData.total_points || 0)
         }
 
-        // Get available questions
-        const available = questions.filter(q => !answeredQuestions.includes(q.id))
+        // Get available questions (use ref for stale-closure safety)
+        const available = questions.filter(q => !usedQuestionIdsRef.current.has(q.id) && !answeredQuestions.includes(q.id))
 
         if (available.length > 0) {
             const randomQ = available[Math.floor(Math.random() * available.length)]
@@ -1096,6 +1108,7 @@ export default function PlayGamePage() {
         }
 
         setAnsweredQuestions(prev => [...prev, currentQuestion.id])
+        usedQuestionIdsRef.current.add(currentQuestion.id)
         setGamePhase('result')
     }
 
@@ -1981,6 +1994,7 @@ export default function PlayGamePage() {
                                                                         setSelectedStudentIds(prev => [...prev, winner.id])
                                                                         if (randomQ) {
                                                                             setAnsweredQuestions(prev => [...prev, randomQ.id])
+                                                                            usedQuestionIdsRef.current.add(randomQ.id)
                                                                         }
                                                                     }}
                                                                     spinning={panelSpinning[i] || false}
